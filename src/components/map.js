@@ -32,6 +32,8 @@ import interaction from 'ol/interaction';
 import plugins from 'ol/plugins';
 import PluginType from 'ol/plugintype';
 import TileLayerRenderer from 'ol/renderer/canvas/tilelayer';
+import VectorLayerRenderer from 'ol/renderer/canvas/vectorlayer';
+import VectorTileLayerRenderer from 'ol/renderer/canvas/vectortilelayer';
 
 import Observable from 'ol/observable';
 
@@ -93,6 +95,8 @@ const BBOX_STRING = '{bbox-epsg-3857}';
 
 plugins.register(PluginType.MAP_RENDERER, MapRenderer);
 plugins.register(PluginType.LAYER_RENDERER, TileLayerRenderer);
+plugins.register(PluginType.LAYER_RENDERER, VectorLayerRenderer);
+plugins.register(PluginType.LAYER_RENDERER, VectorTileLayerRenderer);
 
 /** This variant of getVersion() differs as it allows
  *  for undefined values to be returned.
