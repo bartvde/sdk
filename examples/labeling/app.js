@@ -41,6 +41,29 @@ function main() {
     type: 'raster',
   }));
 
+  store.dispatch(mapActions.addSource('polygons', {
+    type: 'geojson',
+    data: './gz_2010_us_040_00_20m.json'
+  }));
+
+  store.dispatch(mapActions.addLayer({
+    id: 'polygons',
+    source: 'polygons',
+    'type': 'line',
+    'paint': {
+      'line-color': '#00ffff'
+    },
+  }));
+
+  store.dispatch(mapActions.addLayer({
+    id: 'polygon-labels',
+    type: 'symbol',
+    source: 'polygons',
+    layout: {
+      'text-field': '{NAME}',
+    },
+  }));
+
   // 'geojson' sources allow rendering a vector layer
   // with all the features stored as GeoJSON. "data" can
   // be an individual Feature or a FeatureCollection.
