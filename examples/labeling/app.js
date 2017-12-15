@@ -14,6 +14,7 @@ import RendererSwitch from '../rendererswitch';
 import SdkZoomControl from '@boundlessgeo/sdk/components/map/zoom-control';
 import SdkMapReducer from '@boundlessgeo/sdk/reducers/map';
 import * as mapActions from '@boundlessgeo/sdk/actions/map';
+import SdkLayerList from '@boundlessgeo/sdk/components/layer-list';
 
 // This will have webpack include all of the SDK styles.
 import '@boundlessgeo/sdk/stylesheet/sdk.scss';
@@ -26,6 +27,21 @@ applyMiddleware(thunkMiddleware));
 
 function main() {
   store.dispatch(mapActions.setGlyphs('https://free.tilehosting.com/fonts/{fontstack}/{range}.pbf?key={key}'));
+
+  // Set group metadata for layer list
+  store.dispatch(mapActions.updateMetadata({
+    'mapbox:groups': {
+      polygon: {
+        name: 'Polygons',
+      },
+      lines: {
+        name: 'Lines',
+      },
+      points: {
+        name: 'Points',
+      },
+    }
+  }));
 
   // Start with a reasonable global view of the map.
   store.dispatch(mapActions.setView([-15, 30], 2));
@@ -48,19 +64,55 @@ function main() {
 
   store.dispatch(mapActions.addLayer({
     id: 'polygons',
+    metadata: {
+      'mapbox:group': 'polygon',
+    },
     source: 'polygons',
-    'type': 'line',
-    'paint': {
+    type: 'line',
+    paint: {
       'line-color': '#00ffff'
     },
   }));
 
   store.dispatch(mapActions.addLayer({
     id: 'polygon-labels',
+    metadata: {
+      'mapbox:group': 'polygon',
+    },
     type: 'symbol',
     source: 'polygons',
     layout: {
       'text-field': '{NAME}',
+    },
+  }));
+
+  store.dispatch(mapActions.addSource('lines', {
+    type: 'geojson',
+    data: './us_highways.json'
+  }));
+
+  store.dispatch(mapActions.addLayer({
+    id: 'lines',
+    metadata: {
+      'mapbox:group': 'lines',
+    },
+    source: 'lines',
+    type: 'line',
+    paint: {
+      'line-color': '#000000'
+    },
+  }));
+
+  store.dispatch(mapActions.addLayer({
+    id: 'line-labels',
+    metadata: {
+      'mapbox:group': 'lines',
+    },
+    type: 'symbol',
+    source: 'lines',
+    layout: {
+      'text-field': '{ROUTE}',
+      'symbol-placement': 'line'
     },
   }));
 
@@ -78,6 +130,9 @@ function main() {
   // of orange.
   store.dispatch(mapActions.addLayer({
     id: 'points',
+    metadata: {
+      'mapbox:group': 'points',
+    },
     type: 'circle',
     source: 'points',
     paint: {
@@ -90,6 +145,9 @@ function main() {
 
   store.dispatch(mapActions.addLayer({
     id: 'point-labels',
+    metadata: {
+      'mapbox:group': 'points',
+    },
     type: 'symbol',
     source: 'points',
     layout: {
@@ -105,6 +163,18 @@ function main() {
       <SdkZoomControl />
     </RendererSwitch>
   </Provider>, document.getElementById('map'));
+
+  // add some buttons to demo some actions.
+  ReactDOM.render((
+    <div>
+      <h3>Try it out</h3>
+      <div className="sdk-layerlist">
+        <Provider store={store}>
+          <SdkLayerList />
+        </Provider>
+      </div>
+    </div>
+  ), document.getElementById('controls'));
 
 }
 
