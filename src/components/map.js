@@ -85,6 +85,7 @@ import MapCommon, {MapRender} from './map-common';
 import {finalizeMeasureFeature, setMeasureFeature, clearMeasureFeature} from '../actions/drawing';
 
 import ClusterSource from '../source/cluster';
+import ClipboardInteraction from '../interaction/clipboard';
 
 import {parseQueryString, jsonClone, jsonEquals, getLayerById, degreesToRadians, radiansToDegrees, getKey, encodeQueryObject, isLayerVisible} from '../util';
 
@@ -1362,7 +1363,7 @@ export class Map extends React.Component {
     const minZoom = getKey(this.props.map.metadata, MIN_ZOOM_KEY);
     const maxZoom = getKey(this.props.map.metadata, MAX_ZOOM_KEY);
     this.map = new OlMap({
-      interactions: interaction.defaults(),
+      interactions: /*interaction.defaults().extend(*/[new ClipboardInteraction()]/*)*/,
       controls: [new AttributionControl()],
       target: this.mapdiv,
       logo: false,
