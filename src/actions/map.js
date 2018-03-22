@@ -75,6 +75,22 @@ export function setZoom(zoom) {
   };
 }
 
+/** Action to fit an extent.
+ *  @param {number[]} extent The extent to zoom to.
+ *  @param {number[]} size The size of the map.
+ *  @param {string} projection The projection of the map.
+ *
+ *  @returns {Object} Action object to pass to reducer.
+ */
+export function fitExtent(extent, size, projection) {
+  return {
+    type: MAP.FIT_EXTENT,
+    extent,
+    size,
+    projection,
+  };
+}
+
 /** Action to update the map name in map state.
  *  @param {string} name Map name.
  *
@@ -231,7 +247,8 @@ export function addFeatures(sourceName, features, position = -1) {
   };
 }
 
-/** Remove features from a source on the map.
+/** Remove features from a source on the map. If no filter is provided, all features
+ *  will get removed from the source.
  *
  *  @param {Object} sourceName Name of the source on which the features will be removed.
  *  @param {string[]} filter Rule determining which features will be removed.
@@ -250,7 +267,7 @@ export function removeFeatures(sourceName, filter) {
 /** Change the visibility of a given layer in the map state.
  *
  *  @param {string} layerId String id for the layer.
- *  @param {boolean} visibility Should the layer be visible?
+ *  @param {string} visibility 'none' or 'visible'.
  *
  *  @returns {Object} Action object to pass to reducer.
  */
@@ -415,6 +432,34 @@ export function updateMetadata(metadata) {
   };
 }
 
+/** Add a group to the map's metadata.
+ *
+ * @param {string} id Identifier of the group.
+ * @param {Object} config Configuration of the group.
+ *
+ * @returns {Object} An action object.
+ */
+export function addGroup(id, config) {
+  return {
+    type: MAP.ADD_GROUP,
+    id,
+    config,
+  };
+}
+
+/** Remove a group from the map's metadata.
+ *
+ * @param {string} id Identifier of the group.
+ *
+ * @returns {Object} An action object.
+ */
+export function removeGroup(id) {
+  return {
+    type: MAP.REMOVE_GROUP,
+    id,
+  };
+}
+
 /** Manually update a source.
  *
  *  @param {string} sourceName The name of the source to be updated.
@@ -495,15 +540,13 @@ export function addWmsSource(sourceId, serverUrl, layerName, options = {}) {
   if (options.asVector !== false) {
     return addSource(sourceId, {
       type: 'vector',
-      url: url_template,
+      tiles: [url_template],
     });
   } else {
     return addSource(sourceId, {
       type: 'raster',
       tileSize: tile_size,
-      tiles: [
-        url_template,
-      ],
+      tiles: [url_template],
     });
   }
 }
@@ -555,7 +598,7 @@ export function addTmsSource(sourceId, serverUrl, layerName, options = {}) {
 
   return addSource(sourceId, {
     type: 'vector',
-    url,
+    tiles: [url],
   });
 }
 

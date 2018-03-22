@@ -14,20 +14,20 @@ import  Adapter from 'enzyme-adapter-react-16';
 
 import {createStore, combineReducers} from 'redux';
 
-import Feature from 'ol/feature';
-import Point from 'ol/geom/point';
-import LineString from 'ol/geom/linestring';
-import Polygon from 'ol/geom/polygon';
+import Feature from 'ol/Feature';
+import Point from 'ol/geom/Point';
+import LineString from 'ol/geom/LineString';
+import Polygon from 'ol/geom/Polygon';
 
-import SdkMap from '../../src/components/map';
-import MapReducer from '../../src/reducers/map';
-import DrawingReducer from '../../src/reducers/drawing';
+import SdkMap, {getOLStyleFunctionFromMapboxStyle} from '@boundlessgeo/sdk/components/map';
+import MapReducer from '@boundlessgeo/sdk/reducers/map';
+import DrawingReducer from '@boundlessgeo/sdk/reducers/drawing';
 
-import * as MapActions from '../../src/actions/map';
-import * as DrawingActions from '../../src/actions/drawing';
+import * as MapActions from '@boundlessgeo/sdk/actions/map';
+import * as DrawingActions from '@boundlessgeo/sdk/actions/drawing';
 
-import {INTERACTIONS} from '../../src/constants';
-import {DRAWING} from '../../src/action-types';
+import {INTERACTIONS} from '@boundlessgeo/sdk/constants';
+import {DRAWING} from '@boundlessgeo/sdk/action-types';
 
 configure({adapter: new Adapter()});
 
@@ -80,7 +80,7 @@ describe('Map component with drawing', () => {
       },
     }));
 
-    wrapper = mount(<SdkMap store={store} />);
+    wrapper = mount(<SdkMap store={store} includeFeaturesOnClick={true} />);
   });
 
   it('turns on a drawing tool', () => {
@@ -109,6 +109,32 @@ describe('Map component with drawing', () => {
     });
 
     store.dispatch(MapActions.setView([-45, -45], 11));
+  });
+
+  it('should not trigger the popup-related callbacks when drawing', () => {
+    store.dispatch({
+      type: DRAWING.START,
+      interaction: INTERACTIONS.point,
+      sourceName: 'test',
+    });
+    const sdk_map = wrapper.instance().getWrappedInstance();
+    spyOn(sdk_map.map, 'forEachFeatureAtPixel');
+    sdk_map.map.dispatchEvent({
+      type: 'postcompose',
+    });
+
+    sdk_map.map.dispatchEvent({
+      type: 'singleclick',
+      coordinate: [0, 0],
+      // this fakes the clicking of the canvas.
+      originalEvent: {
+        // eslint-disable-next-line no-underscore-dangle
+        target: sdk_map.map.getRenderer().canvas_,
+      },
+    });
+
+    // forEachFeatureAtPixel should not get called
+    expect(sdk_map.map.forEachFeatureAtPixel).not.toHaveBeenCalled();
   });
 
   it('turns on a drawing tool for box', () => {
@@ -232,10 +258,45 @@ describe('Map component with drawing', () => {
     select.getFeatures().push(features[0]);
     select.dispatchEvent({
       type: 'select',
+      selected: [features[0]],
     });
 
     // ensure onFeatureEvent was called.
     expect(sdk_map.onFeatureEvent).toHaveBeenCalled();
+  });
+
+  it('handles deselect', () => {
+    const props = {};
+    props.onFeatureDeselected = () => {};
+    props.store = store;
+    spyOn(props, 'onFeatureDeselected');
+    wrapper = mount(<SdkMap {...props} />);
+    const sdk_map = wrapper.instance().getWrappedInstance();
+    const ol_map = sdk_map.map;
+
+    // dummy feature
+    const feature = new Feature();
+
+    // kick-off the select interaction.
+    store.dispatch({
+      type: DRAWING.START,
+      interaction: INTERACTIONS.select,
+      sourceName: 'test',
+    });
+
+    const interactions = ol_map.getInteractions();
+
+    // get the select interaction
+    const select = interactions.item(interactions.getLength() - 1);
+
+    select.dispatchEvent({
+      type: 'select',
+      selected: [],
+      deselected: [feature],
+    });
+
+    // ensure onFeatureDeselected was called.
+    expect(props.onFeatureDeselected).toHaveBeenCalled();
   });
 
   it('measures a point', () => {
@@ -305,7 +366,7 @@ describe('Map component with drawing', () => {
     });
   });
 
-  it('measures a polygon', () => {
+  it('measures a polygon, and finalizes it', () => {
     const sdk_map = wrapper.instance().getWrappedInstance();
     const ol_map = sdk_map.map;
 
@@ -330,7 +391,8 @@ describe('Map component with drawing', () => {
     tmp_polygon.transform('EPSG:4326', 'EPSG:3857');
     sketch_geometry.setCoordinates(tmp_polygon.getCoordinates());
 
-    expect(store.getState().drawing.measureFeature).toEqual({
+    let state = store.getState().drawing;
+    expect(state.measureFeature).toEqual({
       type: 'Feature',
       properties: {},
       geometry: {
@@ -338,5 +400,73 @@ describe('Map component with drawing', () => {
         coordinates: coords,
       },
     });
+    expect(state.measureDone).toEqual(false);
+
+    measure.dispatchEvent({
+      type: 'drawend',
+    });
+
+    state = store.getState().drawing;
+    expect(state.measureDone).toEqual(true);
+
+  });
+
+  it('measures a polygon, and finishes the geometry', () => {
+    const sdk_map = wrapper.instance().getWrappedInstance();
+    const ol_map = sdk_map.map;
+
+    // set the polygon measure
+    store.dispatch(DrawingActions.startMeasure(INTERACTIONS.measure_polygon));
+    // get the measure interaction
+    const interactions = ol_map.getInteractions();
+    const measure = interactions.item(interactions.getLength() - 1);
+
+    // create a dummy OL feature with a Polygon for measuring.
+    const sketch_geometry = new Polygon([]);
+    const sketch_feature = new Feature(sketch_geometry);
+
+    measure.dispatchEvent({
+      type: 'drawstart',
+      feature: sketch_feature,
+    });
+
+    const coords = [[[0, 0], [20, 20], [0, 40], [0, 0]]];
+    // create a new polygon in map coordinates
+    const tmp_polygon = (new Polygon(coords.slice()));
+    tmp_polygon.transform('EPSG:4326', 'EPSG:3857');
+    sketch_geometry.setCoordinates(tmp_polygon.getCoordinates());
+
+    let state = store.getState().drawing;
+    expect(state.measureFeature).toEqual({
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Polygon',
+        coordinates: coords,
+      },
+    });
+    spyOn(measure, 'finishDrawing');
+    store.dispatch(DrawingActions.finishMeasureGeometry());
+    expect(measure.finishDrawing).toHaveBeenCalled();
+  });
+
+  it('returns ol style func', () => {
+
+    const mbStyle = [{
+      'id': 'gl-draw-polygon-fill-inactive',
+      'type': 'fill',
+      'filter': ['all',
+        ['==', '$type', 'Polygon'],
+      ],
+      'paint': {
+        'fill-color': '#3bb2d0',
+        'fill-outline-color': '#3bb2d0',
+        'fill-opacity': 0.1
+      }
+    }];
+    const feature = new Feature(new Polygon([[[-1, -1], [-1, 1], [1, 1], [1, -1], [-1, -1]]]));
+    feature.set('PERSONS', 2000000);
+    const styleFunc = getOLStyleFunctionFromMapboxStyle(mbStyle);
+    expect(styleFunc(feature, 1).length).toEqual(2);
   });
 });

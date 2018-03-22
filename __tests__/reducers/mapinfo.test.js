@@ -2,8 +2,8 @@
 
 import deepFreeze from 'deep-freeze';
 
-import {MAPINFO} from '../../src/action-types';
-import reducer from '../../src/reducers/mapinfo';
+import {MAPINFO} from '@boundlessgeo/sdk/action-types';
+import reducer from '@boundlessgeo/sdk/reducers/mapinfo';
 
 describe('mapinfo reducer', () => {
 
@@ -14,9 +14,11 @@ describe('mapinfo reducer', () => {
         lngLat: null,
         coordinate: null,
       },
+      requestedRedraws: 0,
       extent: null,
       projection: 'EPSG:3857',
       resolution: null,
+      sourceErrors: {},
     });
   });
 
@@ -64,6 +66,56 @@ describe('mapinfo reducer', () => {
         lngLat: {lng: 50, lat: 45},
         coordinate: [100000, 80000],
       },
+    });
+  });
+
+  it('should increment the requested redraws', () => {
+    let state = {
+      requestedRedraws: 0,
+    };
+    deepFreeze(state);
+
+    const action = {
+      type: MAPINFO.REQUEST_REDRAW,
+    };
+
+    expect(reducer(state, action)).toEqual({
+      requestedRedraws: 1,
+    });
+  });
+
+  it('should set an errored source', () => {
+    let state = {
+      sourceErrors: {},
+    };
+    deepFreeze(state);
+
+    const action = {
+      type: MAPINFO.SET_SOURCE_ERROR,
+      srcName: 'test',
+    };
+
+    expect(reducer(state, action)).toEqual({
+      sourceErrors: {
+        test: true,
+      },
+    });
+  });
+
+  it('should clear errored sources', () => {
+    let state = {
+      sourceErrors: {
+        test: true,
+      },
+    };
+    deepFreeze(state);
+
+    const action = {
+      type: MAPINFO.CLEAR_SOURCE_ERRORS,
+    };
+
+    expect(reducer(state, action)).toEqual({
+      sourceErrors: {},
     });
   });
 });

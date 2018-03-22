@@ -3,37 +3,43 @@
 import React from 'react';
 import {shallow, mount, configure} from 'enzyme';
 import nock from 'nock';
-import  Adapter from 'enzyme-adapter-react-16';
+import Adapter from 'enzyme-adapter-react-16';
 
-import olMap from 'ol/pluggablemap';
-import olView from 'ol/view';
-import TileLayer from 'ol/layer/tile';
-import VectorLayer from 'ol/layer/vector';
-import ImageLayer from 'ol/layer/image';
-import VectorTileLayer from 'ol/layer/vectortile';
-import VectorTileSource from 'ol/source/vectortile';
-import ImageStaticSource from 'ol/source/imagestatic';
-import TileJSONSource from 'ol/source/tilejson';
-import TileWMSSource from 'ol/source/tilewms';
-import XYZSource from 'ol/source/xyz';
-import ImageTile from 'ol/imagetile';
-import TileState from 'ol/tilestate';
+import CanvasMap from 'ol/CanvasMap';
+import olView from 'ol/View';
+import TileLayer from 'ol/layer/Tile';
+import VectorLayer from 'ol/layer/Vector';
+import ImageLayer from 'ol/layer/Image';
+import VectorTileLayer from 'ol/layer/VectorTile';
+import VectorTileSource from 'ol/source/VectorTile';
+import ImageStaticSource from 'ol/source/ImageStatic';
+import TileJSONSource from 'ol/source/TileJSON';
+import TileWMSSource from 'ol/source/TileWMS';
+import XYZSource from 'ol/source/XYZ';
+import ImageTile from 'ol/ImageTile';
+import TileState from 'ol/TileState';
 
 import {createStore, combineReducers} from 'redux';
-import {radiansToDegrees} from '../../src/util';
+import {radiansToDegrees} from '@boundlessgeo/sdk/util';
 
-import ConnectedMap, {Map} from '../../src/components/map';
-import {hydrateLayer, getFakeStyle, getMapExtent} from '../../src/components/map';
-import SdkPopup from '../../src/components/map/popup';
-import MapReducer from '../../src/reducers/map';
-import MapInfoReducer from '../../src/reducers/mapinfo';
-import PrintReducer from '../../src/reducers/print';
-import * as MapActions from '../../src/actions/map';
-import * as PrintActions from '../../src/actions/print';
+import ConnectedMap, {Map} from '@boundlessgeo/sdk/components/map';
+import {hydrateLayer, getFakeStyle, getMapExtent, getTileJSONUrl} from '@boundlessgeo/sdk/components/map';
+import SdkPopup from '@boundlessgeo/sdk/components/map/popup';
+import MapReducer from '@boundlessgeo/sdk/reducers/map';
+import MapInfoReducer from '@boundlessgeo/sdk/reducers/mapinfo';
+import PrintReducer from '@boundlessgeo/sdk/reducers/print';
+import * as MapActions from '@boundlessgeo/sdk/actions/map';
+import * as MapInfoActions from '@boundlessgeo/sdk/actions/mapinfo';
+import * as PrintActions from '@boundlessgeo/sdk/actions/print';
 
 configure({adapter: new Adapter()});
 
 describe('Map component', () => {
+
+  afterEach(() => {
+    nock.cleanAll();
+  });
+
   it('should render without throwing an error', () => {
     const wrapper = shallow(<Map />);
     expect(wrapper.find('.sdk-map').length).toBe(1);
@@ -44,7 +50,21 @@ describe('Map component', () => {
     expect(wrapper.find('.foo').length).toBe(1);
   });
 
-  it('should create a map', () => {
+  it('should create a map', (done) => {
+
+    // eslint-disable-next-line
+    const response = {
+      'maxzoom': 16,
+      'minzoom': 4,
+      'tiles': [
+        'https://a.tiles.mapbox.com/v4/mapbox.mapbox-streets-v7/{z}/{x}/{y}.vector.pbf?access_token=foo',
+        'https://b.tiles.mapbox.com/v4/mapbox.mapbox-streets-v7/{z}/{x}/{y}.vector.pbf?access_token=foo'
+      ]
+    };
+    nock('https://api.mapbox.com')
+      .get('/v4/mapbox.mapbox-streets-v7.json?access_token=foo')
+      .reply(200, response);
+
     const sources = {
       osm: {
         type: 'raster',
@@ -76,7 +96,7 @@ describe('Map component', () => {
       },
       mvt: {
         type: 'vector',
-        url: 'https://{a-d}.tiles.mapbox.com/v4/mapbox.mapbox-streets-v6/{z}/{x}/{y}.vector.pbf?access_token=test_key',
+        tiles: ['https://{a-d}.tiles.mapbox.com/v4/mapbox.mapbox-streets-v6/{z}/{x}/{y}.vector.pbf?access_token=test_key'],
       },
       mapbox: {
         url: 'mapbox://mapbox.mapbox-streets-v7',
@@ -123,7 +143,7 @@ describe('Map component', () => {
         source: 'mapbox',
       }, {
         id: 'purple-points',
-        ref: 'sample-points',
+        source: 'points',
         paint: {
           'circle-radius': 5,
           'circle-color': '#cc00cc',
@@ -154,38 +174,41 @@ describe('Map component', () => {
     />);
     const map = wrapper.instance().map;
     expect(map).toBeDefined();
-    expect(map).toBeInstanceOf(olMap);
-    expect(map.getLayers().item(0)).toBeInstanceOf(TileLayer);
-    expect(map.getLayers().item(1)).toBeInstanceOf(TileLayer);
-    expect(map.getLayers().item(1).getSource()).toBeInstanceOf(TileWMSSource);
-    const tileLoadFunction = map.getLayers().item(6).getSource().getTileLoadFunction();
-    const tileCoord = [0, 0, 0];
-    const state = TileState.IDLE;
-    const src = 'https://www.example.com/foo?BBOX={bbox-epsg-3857}';
-    const tile = new ImageTile(tileCoord, state, src, null, tileLoadFunction);
-    tileLoadFunction(tile, src);
-    // bbox substituted
-    expect(tile.getImage().src).toBe('https://www.example.com/foo?BBOX=-20037508.342789244,20037508.342789244,20037508.342789244,60112525.02836773');
-    // REQUEST param cleared
-    expect(map.getLayers().item(1).getSource().getParams().REQUEST).toBe(undefined);
-    expect(map.getLayers().item(2)).toBeInstanceOf(VectorLayer);
-    expect(map.getLayers().item(3)).toBeInstanceOf(VectorTileLayer);
-    const expected = `https://a.tiles.mapbox.com/v4/mapbox.mapbox-streets-v7/{z}/{x}/{y}.vector.pbf?access_token=${apiKey}`;
-    expect(map.getLayers().item(4).getSource().getUrls()[0]).toBe(expected);
-    expect(map.getLayers().item(4).getSource().getUrls()[1]).toBe(expected.replace('a.', 'b.'));
-    expect(map.getLayers().item(4).getSource().getUrls()[2]).toBe(expected.replace('a.', 'c.'));
-    expect(map.getLayers().item(4).getSource().getUrls()[3]).toBe(expected.replace('a.', 'd.'));
-    let tileUrlFunction = map.getLayers().item(7).getSource().getTileUrlFunction();
-    expect(tileUrlFunction(tileCoord)).toBe('http://www.example.com/tms/0/0/1.png');
-    tileUrlFunction = map.getLayers().item(8).getSource().getTileUrlFunction();
-    expect(tileUrlFunction(tileCoord)).toBe('http://www.example.com/0/0/-1.png');
-    // move the map.
-    wrapper.setProps({
-      zoom: 4,
-    });
-    spyOn(map, 'setTarget');
-    wrapper.unmount();
-    expect(map.setTarget).toHaveBeenCalledWith(null);
+    expect(map).toBeInstanceOf(CanvasMap);
+    window.setTimeout(() => {
+      expect(map.getLayers().item(0)).toBeInstanceOf(TileLayer);
+      expect(map.getLayers().item(1)).toBeInstanceOf(TileLayer);
+      expect(map.getLayers().item(1).getSource()).toBeInstanceOf(TileWMSSource);
+      const tileLoadFunction = map.getLayers().item(6).getSource().getTileLoadFunction();
+      const tileCoord = [0, 0, 0];
+      const state = TileState.IDLE;
+      const src = 'https://www.example.com/foo?BBOX={bbox-epsg-3857}';
+      const tile = new ImageTile(tileCoord, state, src, null, tileLoadFunction);
+      tileLoadFunction(tile, src);
+      // bbox substituted
+      expect(tile.getImage().src).toBe('https://www.example.com/foo?BBOX=-20037508.342789244,20037508.342789244,20037508.342789244,60112525.02836773');
+      // REQUEST param cleared
+      expect(map.getLayers().item(1).getSource().getParams().REQUEST).toBe(undefined);
+      expect(map.getLayers().item(2)).toBeInstanceOf(VectorLayer);
+      expect(map.getLayers().item(3)).toBeInstanceOf(VectorTileLayer);
+      expect(map.getLayers().item(3).getZIndex()).toBe(3);
+      const expected = `https://a.tiles.mapbox.com/v4/mapbox.mapbox-streets-v7/{z}/{x}/{y}.vector.pbf?access_token=${apiKey}`;
+      expect(map.getLayers().item(4).getSource().getUrls()[0]).toBe(expected);
+      expect(map.getLayers().item(4).getSource().getUrls()[1]).toBe(expected.replace('a.', 'b.'));
+      expect(map.getLayers().item(4).getMaxResolution()).toBe(4891.96981025128);
+      let tileUrlFunction = map.getLayers().item(7).getSource().getTileUrlFunction();
+      expect(tileUrlFunction(tileCoord)).toBe('http://www.example.com/tms/0/0/1.png');
+      tileUrlFunction = map.getLayers().item(8).getSource().getTileUrlFunction();
+      expect(tileUrlFunction(tileCoord)).toBe('http://www.example.com/0/0/-1.png');
+      // move the map.
+      wrapper.setProps({
+        zoom: 4,
+      });
+      spyOn(map, 'setTarget');
+      wrapper.unmount();
+      expect(map.setTarget).toHaveBeenCalledWith(null);
+      done();
+    }, 200);
   });
 
   it('should ignore unknown types', () => {
@@ -211,7 +234,7 @@ describe('Map component', () => {
     expect(map.getLayers().getLength()).toBe(0);
   });
 
-  it('should create a static image', () => {
+  it('should create a static image', (done) => {
     const sources = {
       overlay: {
         type: 'image',
@@ -240,14 +263,30 @@ describe('Map component', () => {
     };
     const wrapper = mount(<Map map={{center, zoom, sources, layers, metadata}} />);
     const map = wrapper.instance().map;
-    const layer = map.getLayers().item(0);
-    expect(layer).toBeInstanceOf(ImageLayer);
-    expect(layer.getOpacity()).toEqual(layers[0].paint['raster-opacity']);
-    const source = layer.getSource();
-    expect(source).toBeInstanceOf(ImageStaticSource);
+    window.setTimeout(() => {
+      const layer = map.getLayers().item(0);
+      expect(layer).toBeInstanceOf(ImageLayer);
+      expect(layer.getOpacity()).toEqual(layers[0].paint['raster-opacity']);
+      const source = layer.getSource();
+      expect(source).toBeInstanceOf(ImageStaticSource);
+      done();
+    }, 0);
   });
 
-  it('should create mvt groups', () => {
+  it('should create mvt groups', (done) => {
+    // eslint-disable-next-line
+    const response = {
+      'maxzoom': 16,
+      'minzoom': 0,
+      'tiles': [
+        'https://a.tiles.mapbox.com/v4/mapbox.mapbox-streets-v7/{z}/{x}/{y}.vector.pbf?access_token=foo',
+        'https://b.tiles.mapbox.com/v4/mapbox.mapbox-streets-v7/{z}/{x}/{y}.vector.pbf?access_token=foo'
+      ]
+    };
+    nock('https://api.mapbox.com')
+      .get('/v4/mapbox.mapbox-streets-v7.json?access_token=foo')
+      .reply(200, response);
+
     const sources = {
       mapbox: {
         url: 'mapbox://mapbox.mapbox-streets-v7',
@@ -314,22 +353,26 @@ describe('Map component', () => {
       'bnd:source-version': 0,
       'bnd:layer-version': 0,
     };
-    const wrapper = mount(<Map map={{center, zoom, sources, layers, metadata}} />);
+    const apiKey = 'foo';
+    const wrapper = mount(<Map mapbox={{accessToken: apiKey}} map={{center, zoom, sources, layers, metadata}} />);
     const instance = wrapper.instance();
     const map = instance.map;
-    expect(map.getLayers().getLength()).toBe(1); // 1 layer created
-    const layer = map.getLayers().item(0);
-    expect(layer).toBeInstanceOf(VectorTileLayer);
-    const source = layer.getSource();
-    expect(source).toBeInstanceOf(VectorTileSource);
-    expect(layer.get('name')).toBe('mapbox-landuse_overlay_national_park,landuse_park,water_label');
-    expect(instance.layers[layer.get('name')]).toBe(layer);
-    spyOn(layer, 'setSource');
-    instance.updateLayerSource('mapbox');
-    expect(layer.setSource).toHaveBeenCalled();
+    window.setTimeout(() => {
+      expect(map.getLayers().getLength()).toBe(1); // 1 layer created
+      const layer = map.getLayers().item(0);
+      expect(layer).toBeInstanceOf(VectorTileLayer);
+      const source = layer.getSource();
+      expect(source).toBeInstanceOf(VectorTileSource);
+      expect(layer.get('name')).toBe('mapbox-landuse_overlay_national_park,landuse_park,water_label');
+      expect(instance.layers[layer.get('name')]).toBe(layer);
+      spyOn(layer, 'setSource');
+      instance.updateLayerSource('mapbox');
+      expect(layer.setSource).toHaveBeenCalled();
+      done();
+    }, 200);
   });
 
-  it('should create a raster tilejson', () => {
+  it('should create a raster tilejson', (done) => {
     const sources = {
       tilejson: {
         type: 'raster',
@@ -348,14 +391,17 @@ describe('Map component', () => {
     const center = [0, 0];
     const zoom = 2;
     const wrapper = mount(<Map map={{center, zoom, sources, layers, metadata}} />);
-    const map = wrapper.instance().map;
-    const layer = map.getLayers().item(0);
-    expect(layer).toBeInstanceOf(TileLayer);
-    const source = layer.getSource();
-    expect(source).toBeInstanceOf(TileJSONSource);
+    window.setTimeout(() => {
+      const map = wrapper.instance().map;
+      const layer = map.getLayers().item(0);
+      expect(layer).toBeInstanceOf(TileLayer);
+      const source = layer.getSource();
+      expect(source).toBeInstanceOf(TileJSONSource);
+      done();
+    });
   });
 
-  it('should handle visibility changes', () => {
+  it('should handle visibility changes', (done) => {
     const sources = {
       tilejson: {
         type: 'raster',
@@ -375,30 +421,35 @@ describe('Map component', () => {
     const zoom = 2;
     const wrapper = mount(<Map map={{center, zoom, sources, layers, metadata}} />);
 
-    const instance = wrapper.instance();
-    const map = instance.map;
-    const layer = map.getLayers().item(0);
-    expect(layer.getVisible()).toBe(true);
-    const nextProps = {
-      map: {
-        center,
-        zoom,
-        metadata: {
-          'bnd:source-version': 0,
-          'bnd:layer-version': 1,
-        },
-        sources,
-        layers: [{
-          id: 'tilejson-layer',
-          source: 'tilejson',
-          layout: {
-            visibility: 'none',
+    window.setTimeout(() => {
+      const instance = wrapper.instance();
+      const map = instance.map;
+      const layer = map.getLayers().item(0);
+      expect(layer.getVisible()).toBe(true);
+      const nextProps = {
+        map: {
+          center,
+          zoom,
+          metadata: {
+            'bnd:source-version': 0,
+            'bnd:layer-version': 1,
           },
-        }],
-      },
-    };
-    instance.shouldComponentUpdate.call(instance, nextProps);
-    expect(layer.getVisible()).toBe(false);
+          sources,
+          layers: [{
+            id: 'tilejson-layer',
+            source: 'tilejson',
+            layout: {
+              visibility: 'none',
+            },
+          }],
+        },
+      };
+      wrapper.setProps(nextProps);
+      window.setTimeout(() => {
+        expect(layer.getVisible()).toBe(false);
+        done();
+      }, 0);
+    }, 0);
   });
 
   it('should handle undefined center, zoom and bearing in constructor', () => {
@@ -428,7 +479,7 @@ describe('Map component', () => {
     expect(view.getZoom()).toBe(undefined);
   });
 
-  it('should handle undefined center, zoom, bearing in shouldComponentUpdate', () => {
+  it('should handle undefined center, zoom, bearing in componentWillReceiveProps', () => {
     const sources = {
       tilejson: {
         type: 'raster',
@@ -468,14 +519,14 @@ describe('Map component', () => {
         layers,
       },
     };
-    instance.shouldComponentUpdate.call(instance, nextProps);
+    wrapper.setProps(nextProps);
     // previous values should still be valid
     expect(radiansToDegrees(view.getRotation())).toBe(-45);
     expect(view.getZoom()).toBe(2 + 1);
     expect(view.getCenter()).toBe(centerWGS84);
   });
 
-  it('should handle layout changes', () => {
+  it('should handle layout changes', (done) => {
     const sources = {
       geojson: {
         type: 'geojson',
@@ -509,15 +560,18 @@ describe('Map component', () => {
     const wrapper = mount(<Map map={{center, zoom, sources, layers, metadata}} />);
     const instance = wrapper.instance();
 
-    const map = instance.map;
-    const layer = map.getLayers().item(0);
-    const ol_style = layer.getStyle();
+    window.setTimeout(() => {
+      const map = instance.map;
+      const layer = map.getLayers().item(0);
+      const ol_style = layer.getStyle();
 
-    // test that the style has been set to something
-    expect(typeof ol_style).toEqual('function');
+      // test that the style has been set to something
+      expect(typeof ol_style).toEqual('function');
+      done();
+    }, 0);
   });
 
-  it('handles updates to geojson source', () => {
+  it('handles updates to geojson source', (done) => {
     const sources = {
       drone: {
         type: 'geojson',
@@ -535,8 +589,6 @@ describe('Map component', () => {
     const center = [0, 0];
     const zoom = 2;
     const wrapper = mount(<Map map={{center, zoom, sources, layers, metadata}} />);
-
-    const instance = wrapper.instance();
 
     let nextProps = {
       map: {
@@ -560,19 +612,22 @@ describe('Map component', () => {
       },
     };
     let error = false;
-    try {
-      instance.shouldComponentUpdate.call(instance, nextProps);
-    } catch (e) {
-      error = true;
-    }
-    expect(error).toBe(false);
+    window.setTimeout(() => {
+      try {
+        wrapper.setProps(nextProps);
+      } catch (e) {
+        error = true;
+      }
+      expect(error).toBe(false);
+      done();
+    }, 0);
   });
 
-  it('handles updates to source and layer min/maxzoom values', () => {
+  it('handles updates to source and layer min/maxzoom values', (done) => {
     const sources = {
       tilejson: {
         type: 'raster',
-        url: 'https://api.tiles.mapbox.com/v3/mapbox.geography-class.json?secure',
+        url: 'https://api.mapbox.com/v3/mapbox.geography-class.json?secure',
       },
     };
     const layers = [{
@@ -589,79 +644,85 @@ describe('Map component', () => {
     const zoom = 2;
     const wrapper = mount(<Map map={{center, zoom, sources, layers, metadata}} />);
 
-    const instance = wrapper.instance();
-    const map = instance.map;
-    const view = map.getView();
-    const layer = map.getLayers().item(0);
+    window.setTimeout(() => {
+      const instance = wrapper.instance();
+      const map = instance.map;
+      const view = map.getView();
+      const layer = map.getLayers().item(0);
 
-    // min/max zoom values defined on source only
-    let nextProps = {
-      map: {
-        center,
-        zoom,
-        metadata: {
-          'bnd:source-version': 1,
-          'bnd:layer-version': 2,
-        },
-        sources: {
-          tilejson: {
-            type: 'raster',
-            url: 'https://api.tiles.mapbox.com/v3/mapbox.geography-class.json?secure',
-            minzoom: 4,
-            maxzoom: 8,
+      // min/max zoom values defined on source only
+      let nextProps = {
+        map: {
+          center,
+          zoom,
+          metadata: {
+            'bnd:source-version': 1,
+            'bnd:layer-version': 2,
           },
-        },
-        layers: [{
-          id: 'tilejson-layer',
-          source: 'tilejson',
-        }],
-      },
-    };
-    instance.shouldComponentUpdate.call(instance, nextProps);
-    let max_rez = view.constrainResolution(
-      view.getMaxResolution(), nextProps.map.sources.tilejson.maxzoom - view.getMinZoom());
-    expect(layer.getMaxResolution()).toEqual(max_rez);
-
-    let min_rez = view.constrainResolution(
-      view.getMaxResolution(), nextProps.map.sources.tilejson.minzoom - view.getMinZoom());
-    expect(layer.getMinResolution()).toEqual(min_rez);
-
-    // min.max zoom values defined on both source and layer def
-    nextProps = {
-      map: {
-        center,
-        zoom,
-        metadata: {
-          'bnd:source-version': 2,
-          'bnd:layer-version': 3,
-        },
-        sources: {
-          tilejson: {
-            type: 'raster',
-            url: 'https://api.tiles.mapbox.com/v3/mapbox.geography-class.json?secure',
-            minzoom: 1,
-            maxzoom: 7,
+          sources: {
+            tilejson: {
+              type: 'raster',
+              url: 'https://api.tiles.mapbox.com/v3/mapbox.geography-class.json?secure',
+              minzoom: 4,
+              maxzoom: 8,
+            },
           },
+          layers: [{
+            id: 'tilejson-layer',
+            source: 'tilejson',
+          }],
         },
-        layers: [{
-          id: 'tilejson-layer',
-          source: 'tilejson',
-          minzoom: 2,
-          maxzoom: 9,
-        }],
-      },
-    };
-    instance.shouldComponentUpdate.call(instance, nextProps);
-    // the layer minzoom will be handled in the style and *not* on the layer itself.
-    max_rez = view.constrainResolution(
-      view.getMaxResolution(), nextProps.map.sources.tilejson.maxzoom - view.getMinZoom());
-    expect(layer.getMaxResolution()).toEqual(max_rez);
-    min_rez = view.constrainResolution(
-      view.getMinResolution(), nextProps.map.sources.tilejson.minzoom - view.getMaxZoom());
-    expect(layer.getMinResolution()).toEqual(min_rez);
+      };
+      wrapper.setProps(nextProps);
+      window.setTimeout(() => {
+        let max_rez = view.constrainResolution(
+          view.getMaxResolution(), nextProps.map.sources.tilejson.maxzoom - view.getMinZoom());
+        expect(layer.getMaxResolution()).toEqual(max_rez);
+        let min_rez = view.constrainResolution(
+          view.getMaxResolution(), nextProps.map.sources.tilejson.minzoom - view.getMinZoom());
+        expect(layer.getMinResolution()).toEqual(min_rez);
+
+        // min.max zoom values defined on both source and layer def
+        nextProps = {
+          map: {
+            center,
+            zoom,
+            metadata: {
+              'bnd:source-version': 2,
+              'bnd:layer-version': 3,
+            },
+            sources: {
+              tilejson: {
+                type: 'raster',
+                url: 'https://api.tiles.mapbox.com/v3/mapbox.geography-class.json?secure',
+                minzoom: 1,
+                maxzoom: 7,
+              },
+            },
+            layers: [{
+              id: 'tilejson-layer',
+              source: 'tilejson',
+              minzoom: 2,
+              maxzoom: 9,
+            }],
+          },
+        };
+        wrapper.setProps(nextProps);
+        window.setTimeout(() => {
+          // the layer minzoom will be handled in the style and *not* on the layer itself.
+          max_rez = view.constrainResolution(
+            view.getMaxResolution(), nextProps.map.sources.tilejson.maxzoom - view.getMinZoom());
+          expect(layer.getMaxResolution()).toEqual(max_rez);
+          min_rez = view.constrainResolution(
+            view.getMinResolution(), nextProps.map.sources.tilejson.minzoom - view.getMaxZoom());
+          expect(layer.getMinResolution()).toEqual(min_rez);
+          done();
+        }, 0);
+      }, 0);
+    }, 0);
   });
 
-  it('should handle layer removal and re-adding', () => {
+  it('should handle layer removal and re-adding', (done) => {
     const sources = {
       tilejson: {
         type: 'raster',
@@ -679,40 +740,47 @@ describe('Map component', () => {
       'bnd:layer-version': 0,
     };
     const wrapper = mount(<Map map={{center, zoom, sources, layers, metadata}} />);
-    const instance = wrapper.instance();
-    const map = instance.map;
-    expect(map.getLayers().item(0)).not.toBe(undefined);
-    let nextProps = {
-      map: {
-        center,
-        zoom,
-        metadata: {
-          'bnd:source-version': 0,
-          'bnd:layer-version': 1,
+    window.setTimeout(() => {
+      const instance = wrapper.instance();
+      const map = instance.map;
+      expect(map.getLayers().item(0)).not.toBe(undefined);
+      let nextProps = {
+        map: {
+          center,
+          zoom,
+          metadata: {
+            'bnd:source-version': 0,
+            'bnd:layer-version': 1,
+          },
+          sources,
+          layers: [],
         },
-        sources,
-        layers: [],
-      },
-    };
-    instance.shouldComponentUpdate.call(instance, nextProps);
-    expect(map.getLayers().getLength()).toBe(0);
-    nextProps = {
-      map: {
-        center,
-        zoom,
-        metadata: {
-          'bnd:source-version': 0,
-          'bnd:layer-version': 2,
-        },
-        sources,
-        layers,
-      },
-    };
-    instance.shouldComponentUpdate.call(instance, nextProps);
-    expect(map.getLayers().getLength()).toBe(1);
+      };
+      wrapper.setProps(nextProps);
+      window.setTimeout(() => {
+        expect(map.getLayers().getLength()).toBe(0);
+        nextProps = {
+          map: {
+            center,
+            zoom,
+            metadata: {
+              'bnd:source-version': 0,
+              'bnd:layer-version': 2,
+            },
+            sources,
+            layers,
+          },
+        };
+        wrapper.setProps(nextProps);
+        window.setTimeout(() => {
+          expect(map.getLayers().getLength()).toBe(1);
+          done();
+        }, 0);
+      }, 0);
+    }, 0);
   });
 
-  it('removes sources version definition when excluded from map spec', () => {
+  it('removes sources version definition when excluded from map spec', (done) => {
     const sources = {
       tilejson: {
         type: 'raster',
@@ -731,17 +799,22 @@ describe('Map component', () => {
     };
     const wrapper = mount(<Map map={{sources, layers, center, zoom, metadata}} />);
     const instance = wrapper.instance();
-    expect(instance.sourcesVersion).toEqual(0);
-    const nextProps = {
-      map: {
-        center,
-        zoom,
-        sources,
-        layers: [],
-      },
-    };
-    instance.shouldComponentUpdate.call(instance, nextProps);
-    expect(instance.sourcesVersion).toEqual(undefined);
+    window.setTimeout(() => {
+      expect(instance.sourcesVersion).toEqual(0);
+      const nextProps = {
+        map: {
+          center,
+          zoom,
+          sources,
+          layers: [],
+        },
+      };
+      wrapper.setProps(nextProps);
+      window.setTimeout(() => {
+        expect(instance.sourcesVersion).toEqual(undefined);
+        done();
+      }, 0);
+    }, 0);
   });
 
   it('should create a connected map', () => {
@@ -767,6 +840,32 @@ describe('Map component', () => {
     expect(store.getState().mapinfo.size).toEqual([100, 200]);
   });
 
+  it('should change layer visibility', (done) => {
+    const store = createStore(combineReducers({
+      map: MapReducer,
+    }));
+
+    const wrapper = mount(<ConnectedMap store={store} />);
+    const sdk_map = wrapper.instance().getWrappedInstance();
+
+    store.dispatch(MapActions.addOsmSource('foo'));
+    store.dispatch(MapActions.addLayer({
+      id: 'foo',
+      source: 'foo',
+    }));
+
+    let layer;
+    window.setTimeout(function() {
+      layer = sdk_map.map.getLayers().item(0);
+      expect(layer.getVisible()).toBe(true);
+      store.dispatch(MapActions.setLayerVisibility('foo', 'none'));
+      window.setTimeout(function() {
+        layer = sdk_map.map.getLayers().item(0);
+        expect(layer.getVisible()).toBe(false);
+        done();
+      }, 0);
+    }, 0);
+  });
 
   it('should trigger the setView callback', () => {
     const store = createStore(combineReducers({
@@ -798,6 +897,10 @@ describe('Map component', () => {
     const wrapper = mount(<ConnectedMap {...props} />);
     const sdk_map = wrapper.instance().getWrappedInstance();
 
+    sdk_map.map.getSize = function() {
+      return [100, 200];
+    };
+
     sdk_map.map.dispatchEvent({
       type: 'pointermove',
       coordinate: [0, 0],
@@ -806,7 +909,65 @@ describe('Map component', () => {
     expect(store.getState().mapinfo.mouseposition.lngLat).toEqual({lng: 0, lat: 0});
   });
 
-  it('should update the source url', () => {
+  it('should trigger updateSize', () => {
+    const store = createStore(combineReducers({
+      map: MapReducer,
+      mapinfo: MapInfoReducer,
+    }));
+
+    const props = {
+      store,
+    };
+    const wrapper = mount(<ConnectedMap {...props} />);
+    const sdk_map = wrapper.instance().getWrappedInstance();
+
+    sdk_map.map.getSize = function() {
+      return [100, 200];
+    };
+
+    spyOn(sdk_map.map, 'updateSize');
+    store.dispatch(MapInfoActions.setMapSize([200, 200]));
+    expect(sdk_map.map.updateSize).toHaveBeenCalled();
+  });
+
+  it('should trigger updateSize with requestRedraw', (done) => {
+    const store = createStore(combineReducers({
+      map: MapReducer,
+      mapinfo: MapInfoReducer,
+    }));
+
+    const props = {
+      store,
+    };
+
+    nock('http://dummy')
+      .get(/^.*?SERVICE=WFS&VERSION=1.1.0&SRSNAME=EPSG%3A4326&REQUEST=GetFeature&TYPENAME=dummy&OUTPUTFORMAT=JSON.*$/)
+      .times(4)
+      .reply(200, {
+        type: 'FeatureCollection',
+        features: [],
+      });
+
+    // setup a reasonable set of sources that may throw errors
+    //  when refreshed.
+    store.dispatch(MapActions.addOsmSource('foo'));
+    store.dispatch(MapActions.addWmsSource('wms', 'http://dummy/wms', 'dummy', {asVector: false}));
+    store.dispatch(MapActions.addWfsSource('wfs', 'http://dummy/wfs', 'dummy'));
+
+    const wrapper = mount(<ConnectedMap {...props} />);
+
+    const sdk_map = wrapper.instance().getWrappedInstance();
+
+    setTimeout(() => {
+      spyOn(sdk_map.map, 'updateSize');
+      store.dispatch(MapInfoActions.requestRedraw());
+      expect(sdk_map.map.updateSize).toHaveBeenCalled();
+      done();
+    }, 100);
+  });
+
+
+  it('should update the source url', (done) => {
     const store = createStore(combineReducers({
       map: MapReducer,
     }));
@@ -823,16 +984,20 @@ describe('Map component', () => {
 
     const wrapper = mount(<ConnectedMap store={store} />);
     const sdk_map = wrapper.instance().getWrappedInstance();
-
-    let source = sdk_map.sources['foo'];
-    expect(source.getParams()['SALT']).toBeUndefined();
-    store.dispatch(MapActions.updateSource('foo', {
-      type: 'raster',
-      tileSize: 256,
-      tiles: [getMapUrl + '&SALT=0.556643'],
-    }));
-    source = sdk_map.sources['foo'];
-    expect(source.getParams()['SALT']).toEqual('0.556643');
+    window.setTimeout(() => {
+      let source = sdk_map.sources['foo'];
+      expect(source.getParams()['SALT']).toBeUndefined();
+      store.dispatch(MapActions.updateSource('foo', {
+        type: 'raster',
+        tileSize: 256,
+        tiles: [getMapUrl + '&SALT=0.556643'],
+      }));
+      window.setTimeout(() => {
+        source = sdk_map.sources['foo'];
+        expect(source.getParams()['SALT']).toEqual('0.556643');
+        done();
+      }, 0);
+    }, 0);
   });
 
   it('should trigger the setRotation callback', () => {
@@ -996,6 +1161,17 @@ describe('Map component', () => {
     expect(sdk_map.map.getOverlays().getLength()).toEqual(0);
   });
 
+  it('should handle Mapbox substitution in TileJSON', () => {
+    const apiKey = 'foo';
+    const glSource = {
+      type: 'raster',
+      tileSize: 256,
+      url: 'mapbox://mapbox.satellite',
+    };
+    const url = getTileJSONUrl(glSource, apiKey);
+    expect(url).toEqual('https://api.mapbox.com/v4/mapbox.satellite.json?access_token=foo');
+  });
+
   it('should handle getFakeStyle', () => {
     const sprite = 'mapbox://foo';
     const baseUrl = 'http://example.com';
@@ -1070,12 +1246,6 @@ describe('Map component', () => {
 
     expect(sdk_map.handleAsyncGetFeatureInfo).toHaveBeenCalled();
   });
-});
-
-describe('Map component async', () => {
-  afterEach(() => {
-    nock.cleanAll();
-  });
 
   // removed set spriteData tests as they are now handled in ol-mapbox-style
 
@@ -1126,6 +1296,8 @@ describe('Map component async', () => {
     promises[0].then(function(features) {
       expect(features[layer.id][0].id).toBe('bugsites.1');
       done();
+    }).catch((error) => {
+      console.error('An error occured.', error);
     });
   });
 
@@ -1169,6 +1341,55 @@ describe('Map component async', () => {
     promises[0].then(function(features) {
       expect(features[layer.id][0].properties.OBJECTID).toBe('281');
       done();
+    }).catch((error) => {
+      console.error('An error occured.', error);
+    });
+  });
+
+  it('should handle WFS GetFeatureInfo', (done) => {
+    const store = createStore(combineReducers({
+      map: MapReducer,
+    }));
+
+    store.dispatch(MapActions.setView([-45, -45], 11));
+
+    const props = {
+      store,
+      includeFeaturesOnClick: true,
+    };
+
+    const wrapper = mount(<ConnectedMap {...props} />);
+    const sdk_map = wrapper.instance().getWrappedInstance();
+    sdk_map.map.getSize = function() {
+      return [300, 300];
+    };
+    let promises = [];
+    const layer = {
+      id: 'foo',
+      source: 'mywms',
+      metadata: {
+        'bnd:queryable': true,
+        'bnd:query-endpoint': 'http://example.com/geoserver',
+        'bnd:query-type': 'WFS',
+        'bnd:geometry-name': 'wkb_geometry',
+      },
+    };
+    // eslint-disable-next-line
+    const response = {"type":"FeatureCollection","totalFeatures":1,"features":[{"type":"Feature","id":"ogrgeojson_92929c5c.48","geometry":{"type":"Polygon",'coordinates': [[[-100.0, -100.0], [100.0, -100.0], [100.0, 100.0], [-100.0, 100.0], [-100.0, -100.0] ]]},"geometry_name":"wkb_geometry","properties":{"id":"states.11","state_name":"Arizona","state_fips":"04","sub_region":"Mtn","state_abbr":"AZ","land_km":294333.462,"water_km":942.772,"persons":3665228,"families":940106,"houshold":1368843,"male":1810691,"female":1854537,"workers":1358263,"drvalone":1178320,"carpool":239083,"pubtrans":32856,"employed":1603896,"unemploy":123902,"service":455896,"manual":185109,"p_male":0.494,"p_female":0.506,"samp_pop":468178}}],"crs":{"type":"name","properties":{"name":"urn:ogc:def:crs:EPSG::4326"}}};
+    nock('http://example.com')
+      .get('/geoserver?request=GetFeature&version=1.0.0&typename=mywms&outputformat=JSON&srsName=EPSG%3A4326&cql_filter=BBOX(wkb_geometry%2C-52.87405657035609%2C-52.87405657035609%2C252.8740565703561%2C252.8740565703561%2C%27EPSG%3A3857%27)')
+      .reply(200, response);
+
+    sdk_map.sources = {
+      mywms: new XYZSource({urls: ['http://example.com/geoserver?foo=bar']}),
+    };
+    sdk_map.handleAsyncGetFeatureInfo(layer, promises, {coordinate: [100, 100]});
+    expect(promises.length).toEqual(1);
+    promises[0].then(function(features) {
+      expect(features[layer.source][0].properties['samp_pop']).toBe(468178);
+      done();
+    }).catch((error) => {
+      console.error('An error occured.', error);
     });
   });
 

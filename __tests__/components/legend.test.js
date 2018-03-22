@@ -6,10 +6,10 @@ import nock from 'nock';
 import  Adapter from 'enzyme-adapter-react-16';
 
 import {createStore, combineReducers} from 'redux';
-import MapReducer from '../../src/reducers/map';
+import MapReducer from '@boundlessgeo/sdk/reducers/map';
 
-import SdkLegend, {Legend} from '../../src/components/legend';
-import {getLegend, getPointGeometry, getLineGeometry, getPolygonGeometry} from '../../src/components/legend';
+import SdkLegend, {Legend} from '@boundlessgeo/sdk/components/legend';
+import {getLegend, getPointGeometry, getLineGeometry, getPolygonGeometry} from '@boundlessgeo/sdk/components/legend';
 
 configure({adapter: new Adapter()});
 
@@ -297,6 +297,30 @@ describe('test the Legend component', () => {
     const newLayer = {id: 'vector-point-test'};
     result = legend.componentWillReceiveProps({layers: [newLayer]});
     expect(result).toBe(true); // layer changed so update
+  });
+
+  it('shouldComponentUpdate should work correctly', () => {
+    const state = store.getState().map;
+    const wrapper = mount(<Legend layerId="vector-polygon-test" strokeId="vector-line-test" layers={state.layers} sources={state.sources} />);
+    let layer, stroke;
+    const layers = store.getState().map.layers;
+    for (let i = 0, ii = layers.length; i < ii; ++i) {
+      if (layers[i].id === 'vector-polygon-test') {
+        layer = layers[i];
+      }
+      if (layers[i].id === 'vector-line-test') {
+        stroke = layers[i];
+      }
+    }
+    const legend = wrapper.instance();
+    let result = legend.shouldComponentUpdate({layers: [layer, stroke]});
+    expect(result).toBe(false); // no need to update
+    const newLayer = {id: 'vector-polygon-test', paint: {}};
+    result = legend.shouldComponentUpdate({layers: [newLayer, stroke]});
+    expect(result).toBe(true); // layer changed so update
+    const newStroke = {id: 'vector-line-test', paint: {}};
+    result = legend.shouldComponentUpdate({layers: [layer, newStroke]});
+    expect(result).toBe(true); // stroke layer changed so update
   });
 
 });

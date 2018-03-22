@@ -51,6 +51,15 @@ exports.handlers = {
         if (info) {
           doclet.properties = [];
           for (let i = 0, ii = info.length; i < ii; ++i) {
+            if (info[i].composes) {
+              const parentClass = info[i].composes[0].replace('./', 'module:components/');
+              const parentInfo = componentInfo[parentClass];
+              for (let p = 0, pp = parentInfo.length; p < pp; ++p) {
+                if (parentInfo[p].props) {
+                  info[i].props = Object.assign(info[i].props || {}, parentInfo[p].props);
+                }
+              }
+            }
             if (info[i].props) {
               for (let key in info[i].props) {
                 const prop = info[i].props[key];
@@ -61,14 +70,16 @@ exports.handlers = {
                     defaultValue = defaultValue.substring(defaultValue.indexOf('class ') + 6, defaultValue.indexOf('extends'));
                   }
                 }
-                doclet.properties.push({
-                  name: key,
-                  optional: !prop.required,
-                  description: prop.description,
-                  defaultvalue: defaultValue,
-                  type: {names: prop.type ? generateType(prop.type) : undefined},
-                  subprops: getSubprops(prop),
-                });
+                if (prop.description.indexOf('@ignore') === -1) {
+                  doclet.properties.push({
+                    name: key,
+                    optional: !prop.required,
+                    description: prop.description,
+                    defaultvalue: defaultValue,
+                    type: {names: prop.type ? generateType(prop.type) : undefined},
+                    subprops: getSubprops(prop),
+                  });
+                }
               }
             }
           }

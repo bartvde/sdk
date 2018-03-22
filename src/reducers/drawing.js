@@ -26,22 +26,15 @@ const defaultState = {
   sourceName: null,
   measureFeature: null,
   measureSegments: null,
+  currentMode: null,
+  afterMode: null,
+  currentModeOptions: null,
+  measureDone: false,
+  editStyle: null,
+  modifyStyle: null,
+  selectStyle: null,
+  measureStyle: null,
 };
-
-/** Update the state to indicate an interaction has started.
- *  @param {Object} state Current state.
- *  @param {Object} action Action to handle.
- *
- *  @returns {Object} The new state.
- */
-function startDrawing(state, action) {
-  return {
-    interaction: action.interaction,
-    sourceName: action.sourceName,
-    measureFeature: null,
-    measureSegments: null,
-  };
-}
 
 /** Drawing reducer.
  *  @param {Object} state The redux state.
@@ -53,18 +46,63 @@ export default function drawingReducer(state = defaultState, action) {
   switch (action.type) {
     case DRAWING.END:
       // when interaction is null, drawing should cease.
-      return {interaction: null, sourceName: null, measureFeature: null, measureSegments: null};
+      return Object.assign({}, state, {
+        interaction: null,
+        sourceName: null,
+        currentMode: action.currentMode,
+        afterMode: action.afterMode,
+        currentModeOptions: null,
+        measureDone: false,
+        measureFeature: null,
+        measureSegments: null
+      });
     case DRAWING.START:
-      return startDrawing(state, action);
+      return Object.assign({}, state, {
+        interaction: action.interaction,
+        sourceName: action.sourceName,
+        currentMode: action.currentMode,
+        afterMode: action.afterMode,
+        currentModeOptions: action.currentModeOptions,
+        measureDone: false,
+        measureFeature: null,
+        measureSegments: null,
+      });
+    case DRAWING.SET_EDIT_STYLE:
+      return Object.assign({}, state, {
+        editStyle: action.editStyle
+      });
+    case DRAWING.SET_SELECT_STYLE:
+      return Object.assign({}, state, {
+        selectStyle: action.selectStyle
+      });
+    case DRAWING.SET_MODIFY_STYLE:
+      return Object.assign({}, state, {
+        modifyStyle: action.modifyStyle
+      });
+    case DRAWING.SET_MEASURE_STYLE:
+      return Object.assign({}, state, {
+        measureStyle: action.measureStyle
+      });
     case DRAWING.SET_MEASURE_FEATURE:
       return Object.assign({}, state, {
+        measureDone: false,
         measureFeature: action.feature,
         measureSegments: action.segments,
+      });
+    case DRAWING.FINALIZE_MEASURE_FEATURE:
+      return Object.assign({}, state, {
+        measureDone: true,
+        measureFinishGeometry: false,
+      });
+    case DRAWING.FINISH_MEASURE_GEOMETRY:
+      return Object.assign({}, state, {
+        measureFinishGeometry: true,
       });
     case DRAWING.CLEAR_MEASURE_FEATURE:
       return Object.assign({}, state, {
         measureFeature: null,
         measureSegments: null,
+        measureDone: false,
       });
     default:
       return state;

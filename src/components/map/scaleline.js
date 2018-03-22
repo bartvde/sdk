@@ -14,7 +14,8 @@
 import React from 'react';
 import {connect} from 'react-redux';
 import PropTypes from 'prop-types';
-import Proj from 'ol/proj';
+import {METERS_PER_UNIT} from 'ol/proj/Units';
+import {fromLonLat, get, getPointResolution} from 'ol/proj';
 
 const DEGREES = 'degrees';
 const IMPERIAL = 'imperial';
@@ -31,7 +32,7 @@ const LEADING_DIGITS = [1, 2, 5];
 export class ScaleLine extends React.Component {
   shouldComponentUpdate(nextProps) {
     // compare center
-    if (this.props.map && nextProps.map && this.props.map.center && nextProps.map.center && ((nextProps.map.center[0] !== this.props.map.center[0] || nextProps.map.center[1] !== this.props.map.center[1]))) {
+    if (this.props.map && nextProps.map && this.props.map.center && nextProps.map.center && (nextProps.map.center[0] !== this.props.map.center[0] || nextProps.map.center[1] !== this.props.map.center[1])) {
       return true;
     }
     // compare resolution
@@ -45,19 +46,19 @@ export class ScaleLine extends React.Component {
     return false;
   }
   calculateProperties() {
-    const center = Proj.fromLonLat(this.props.map.center);
+    const center = fromLonLat(this.props.map.center);
     const units = this.props.units;
     const pointResolutionUnits = units === DEGREES ? DEGREES : 'm';
-    const projection = Proj.get(this.props.mapinfo.projection);
+    const projection = get(this.props.mapinfo.projection);
     const resolution = this.props.mapinfo.resolution;
-    let pointResolution = Proj.getPointResolution(projection, resolution, center, pointResolutionUnits);
+    let pointResolution = getPointResolution(projection, resolution, center, pointResolutionUnits);
     if (units !== DEGREES) {
       pointResolution *= projection.getMetersPerUnit();
     }
     let nominalCount = this.props.minWidth * pointResolution;
     let suffix = '';
     if (units === DEGREES) {
-      const metersPerDegree = Proj.METERS_PER_UNIT[DEGREES];
+      const metersPerDegree = METERS_PER_UNIT[DEGREES];
       if (projection.getUnits() === DEGREES) {
         nominalCount *= metersPerDegree;
       } else {
@@ -118,6 +119,10 @@ export class ScaleLine extends React.Component {
   }
   render() {
     if (this.props.mapinfo && this.props.mapinfo.resolution !== null) {
+      let className = 'sdk-scale-line';
+      if (this.props.className) {
+        className += ' ' + this.props.className;
+      }
       const properties = this.calculateProperties();
       const pointResolution = properties.pointResolution;
       const suffix = properties.suffix;
@@ -137,7 +142,11 @@ export class ScaleLine extends React.Component {
         i += 1;
       }
       let html = count + ' ' + suffix;
-      return (<div style={this.props.style} className="sdk-scale-line"><div className="sdk-scale-line-inner" style={{width: width}} dangerouslySetInnerHTML={{__html: html}}></div></div>);
+      return (
+        <div style={this.props.style} className={className}>
+          <div className="sdk-scale-line-inner" style={{width: width}} dangerouslySetInnerHTML={{__html: html}}></div>
+        </div>
+      );
     } else {
       return false;
     }

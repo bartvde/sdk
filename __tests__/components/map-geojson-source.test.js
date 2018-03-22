@@ -2,7 +2,7 @@
  *
  */
 
-/* global xit, it, describe, expect, beforeEach, afterEach */
+/* global it, it, describe, expect, beforeEach, afterEach */
 
 import React from 'react';
 import {createStore, combineReducers} from 'redux';
@@ -10,11 +10,12 @@ import {mount, configure} from 'enzyme';
 import nock from 'nock';
 import  Adapter from 'enzyme-adapter-react-16';
 
-import SdkMap from '../../src/components/map';
-import MapReducer from '../../src/reducers/map';
-import MapboxReducer from '../../src/reducers/mapbox';
-import * as MapActions from '../../src/actions/map';
-import * as MapboxActions from '../../src/actions/mapbox';
+import SdkMap from '@boundlessgeo/sdk/components/map';
+import MapReducer from '@boundlessgeo/sdk/reducers/map';
+import MapboxReducer from '@boundlessgeo/sdk/reducers/mapbox';
+import MapInfoReducer from '@boundlessgeo/sdk/reducers/mapinfo';
+import * as MapActions from '@boundlessgeo/sdk/actions/map';
+import * as MapboxActions from '@boundlessgeo/sdk/actions/mapbox';
 
 configure({adapter: new Adapter()});
 
@@ -27,6 +28,7 @@ describe('tests for the geojson-type map sources', () => {
     store = createStore(combineReducers({
       map: MapReducer,
       mapbox: MapboxReducer,
+      mapinfo: MapInfoReducer,
     }));
 
     baseUrl = 'http://example.com/base';
@@ -43,22 +45,34 @@ describe('tests for the geojson-type map sources', () => {
     expect(map).not.toBe(undefined);
   });
 
-  function testGeojsonData(done, data, nFeatures) {
+  function testGeojsonData(done, data, nFeatures, silence = false) {
+    // when expecting console.errror to show something in the library,
+    //  silence it from reporting.
+    let error;
+    if (silence) {
+      error = global.console.error;
+      global.console.error = () => {};
+    }
     const src_name = 'test-source';
     store.dispatch(MapActions.addSource(src_name, {
       type: 'geojson',
       data,
     }));
 
-    // check to see if the map source is now defined.
-    expect(map.sources[src_name]).not.toBe(undefined);
+    window.setTimeout(() => {
+      if (silence) {
+        global.console.error = error;
+      }
+      // check to see if the map source is now defined.
+      expect(map.sources[src_name]).not.toBe(undefined);
 
-    // check the feature count matches.
-    setTimeout(() => {
-      const src = map.sources[src_name];
-      expect(src.getFeatures().length).toBe(nFeatures);
-      done();
-    }, 200);
+      // check the feature count matches.
+      setTimeout(() => {
+        const src = map.sources[src_name];
+        expect(src.getFeatures().length).toBe(nFeatures);
+        done();
+      }, 200);
+    }, 0);
   }
 
   it('handles undefined data', (done) => {
@@ -137,7 +151,11 @@ describe('tests for the geojson-type map sources', () => {
   });
 
   it('tries to fetch a geojson file that does not exist', (done) => {
-    testGeojsonData(done, 'http://example.com/no-where.geojson', 0);
+    nock('http://example.com')
+      .get('/no-where.geojson')
+      .reply(404, 'alphabet soup');
+
+    testGeojsonData(done, 'http://example.com/no-where.geojson', 0, true);
   });
 
   it('fetches a bad geojson file', (done) => {
@@ -145,7 +163,7 @@ describe('tests for the geojson-type map sources', () => {
       .get('/bad.geojson')
       .reply(200, 'alphabet soup');
 
-    testGeojsonData(done, 'http://example.com/bad.geojson', 0);
+    testGeojsonData(done, 'http://example.com/bad.geojson', 0, true);
   });
 
   it('fetches by bbox then by relative url', (done) => {
@@ -171,5 +189,19 @@ describe('tests for the geojson-type map sources', () => {
       .reply(200, JSON.stringify(feature_collection));
 
     testGeojsonData(done, 'https://foo.com/my.geojson', 2);
+  });
+
+  it('dispatches an error', (done) => {
+    nock('http://dummy')
+      .get('/missing.geojson')
+      .reply(404, '');
+
+    const follow_up = () => {
+      const errors = store.getState().mapinfo.sourceErrors;
+      expect(errors['test-source']).toBe(true);
+      done();
+    };
+
+    testGeojsonData(follow_up, 'http://dummy/missing.geojson', 0, true);
   });
 });

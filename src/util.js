@@ -12,7 +12,10 @@
  */
 
 import {GROUP_KEY, TITLE_KEY} from './constants';
-import GeoJsonFormat from 'ol/format/geojson';
+import GeoJsonFormat from 'ol/format/GeoJSON';
+import {transformExtent} from 'ol/proj';
+import View from 'ol/View';
+
 /** @module util
  * @desc functions for Boundless SDK.
  *
@@ -34,11 +37,41 @@ export function jsonEquals(objectA, objectB) {
 /** Gets the resolution for a zoom level in spherical mercator.
  *
  * @param {number} zoom The zoom level.
+ * @param {string} projection The map projection.
  *
  * @returns {number} The resolution for that zoom level.
  */
-export function getResolutionForZoom(zoom) {
-  return (6378137.0 * 2 * Math.PI / 256) /  Math.pow(2, zoom);
+export function getResolutionForZoom(zoom, projection) {
+  const view = new View({projection: projection});
+  return view.getResolutionForZoom(zoom) / 2;
+}
+
+
+/** Gets the zoom level for a resolution in spherical mercator.
+ *
+ * @param {number} resolution The resolution.
+ * @param {string} projection The map projection.
+ *
+ * @returns {number} The zoom level for that zoom resolution.
+ */
+export function getZoomForResolution(resolution, projection) {
+  const view = new View({projection: projection});
+  return view.getZoomForResolution(resolution) - 1;
+}
+
+/** Gets the resolution for a specific extent.
+ *
+ * @param {number[]} extent The extent to consider.
+ * @param {number[]} size The size of the map.
+ * @param {string} projection The projection of the map.
+ *
+ * @returns {number} The resolution to use when zooming to the extent.
+ */
+export function getResolutionForExtent(extent, size, projection) {
+  const bbox = transformExtent(extent, 'EPSG:4326', projection);
+  const xResolution = (bbox[2] - bbox[0]) / size[0];
+  const yResolution = (bbox[3] - bbox[1]) / size[1];
+  return Math.max(xResolution, yResolution);
 }
 
 /** Gets a layer by it's id. https://www.mapbox.com/mapbox-gl-js/style-spec/#layer-id
@@ -244,4 +277,40 @@ export function getLayersByGroup(layers, groupId) {
     }
   }
   return group_layers;
+}
+
+/** Compare the value of a prop from an optional state-tree.
+ *
+ *  @param {Object} state - Current state.
+ *  @param {Object} nextState - Next state.
+ *  @param {String} reducerName - The "subtree" that may or may not exist.
+ *  @param {String} prop - The name of the prop to compare between states.
+ *
+ *  @returns {Boolean} true if equal and false if values differ.
+ */
+export function optionalEquals(state, nextState, reducerName, prop) {
+  const subtree = state[reducerName];
+  const next_subtree = nextState[reducerName];
+
+  if (subtree === undefined && next_subtree === undefined) {
+    return true;
+  }
+
+  const value = (subtree === undefined) ? undefined : subtree[prop];
+  const nextValue = (next_subtree === undefined) ? undefined : next_subtree[prop];
+
+  return jsonEquals(value, nextValue);
+}
+
+/** Check if the layer's source has an error set.
+ *  This requires the MapInfo reducer for sourceErrors to
+ *  be set.
+ *
+ *  @param {Object} layerDef The definition of the layer from the state.
+ *  @param {Object} sourceErrors The sourceErrors object from the mapinfo reducer.
+ *
+ * @returns {Boolean} true when an error, false otherwise.
+ */
+export function hasSourceError(layerDef, sourceErrors) {
+  return (sourceErrors && sourceErrors[layerDef.source] === true);
 }

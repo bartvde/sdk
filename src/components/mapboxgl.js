@@ -18,7 +18,8 @@ import uuid from 'uuid';
 import {connect} from 'react-redux';
 import {setView, setBearing} from '../actions/map';
 import {setMapSize, setMousePosition, setMapExtent, setResolution, setProjection} from '../actions/mapinfo';
-import {getResolutionForZoom} from '../util';
+import {getResolutionForZoom, getKey, optionalEquals} from '../util';
+import MapCommon, {MapRender} from './map-common';
 
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
 import {dataVersionKey} from '../reducers/map';
@@ -26,9 +27,10 @@ import {INTERACTIONS} from '../constants';
 import area from '@turf/area';
 import distance from '@turf/distance';
 import {setMeasureFeature, clearMeasureFeature} from '../actions/drawing';
-import {LAYER_VERSION_KEY, SOURCE_VERSION_KEY} from '../constants';
+import {LAYER_VERSION_KEY, SOURCE_VERSION_KEY, MIN_ZOOM_KEY, MAX_ZOOM_KEY} from '../constants';
 
 import 'mapbox-gl/dist/mapbox-gl.css';
+import StaticMode from '@mapbox/mapbox-gl-draw-static-mode';
 
 const isBrowser = !(
   typeof process === 'object' &&
@@ -38,7 +40,11 @@ const isBrowser = !(
 
 const mapboxgl = isBrowser ? require('mapbox-gl') : null;
 
-/** @module components/map
+const SIMPLE_SELECT_MODE = 'simple_select';
+const DIRECT_SELECT_MODE = 'direct_select';
+const STATIC_MODE = 'static';
+
+/** @module components/mapboxgl
  *
  * @desc Provide a Mapbox GL map which reflects the
  *       state of the Redux store.
@@ -72,9 +78,16 @@ export class MapboxGL extends React.Component {
     this.elems = {};
     this.overlays = [];
 
+    this.draw = null;
+    this.drawMode = StaticMode;
+    this.currentMode = STATIC_MODE;
+    this.afterMode = STATIC_MODE;
+
     // interactions are how the user can manipulate the map,
     //  this tracks any active interaction.
     this.activeInteractions = null;
+
+    this.render = MapRender.bind(this);
   }
 
   componentDidMount() {
@@ -95,6 +108,15 @@ export class MapboxGL extends React.Component {
    * @returns {boolean} should the component re-render?
    */
   shouldComponentUpdate(nextProps) {
+    // This should always return false to keep
+    // render() from being called.
+    return false;
+  }
+
+  componentWillReceiveProps(nextProps) {
+    if (nextProps.drawing && nextProps.drawing.interaction) {
+      this.addDrawIfNeeded();
+    }
     // check if the sources or layers diff
     const next_sources_version = getVersion(nextProps.map, SOURCE_VERSION_KEY);
     const next_layer_version = getVersion(nextProps.map, LAYER_VERSION_KEY);
@@ -129,18 +151,24 @@ export class MapboxGL extends React.Component {
         const version_key = dataVersionKey(src_name);
         if (this.props.map.metadata !== undefined &&
             this.props.map.metadata[version_key] !== nextProps.map.metadata[version_key] && this.map) {
-          this.map.getSource(src_name).setData(nextProps.map.sources[src_name].data);
+          const source = this.map.getSource(src_name);
+          if (source !== undefined) {
+            source.setData(nextProps.map.sources[src_name].data);
+          }
         }
       }
     }
+    // trigger a resize event when the size has changed or a redraw is requested.
+    if (!optionalEquals(this.props, nextProps, 'mapinfo', 'size')
+        || !optionalEquals(this.props, nextProps, 'mapinfo', 'requestedRedraws')) {
+      this.map.resize();
+    }
+
     // change the current interaction as needed
     if (nextProps.drawing && (nextProps.drawing.interaction !== this.props.drawing.interaction
         || nextProps.drawing.sourceName !== this.props.drawing.sourceName)) {
       this.updateInteraction(nextProps.drawing);
     }
-    // This should always return false to keep
-    // render() from being called.
-    return false;
   }
 
   onMapClick(e) {
@@ -166,7 +194,7 @@ export class MapboxGL extends React.Component {
   }
 
   onMapMoveEnd() {
-    this.props.setView(this.map);
+    this.props.setView(this.map, this.props.projection);
   }
 
   onMouseMove(e) {
@@ -176,11 +204,25 @@ export class MapboxGL extends React.Component {
   onMapLoad() {
     // add the initial popups from the user.
     for (let i = 0, ii = this.props.initialPopups.length; i < ii; i++) {
-      // set silent to true since updatePopups is called after the loop
-      this.addPopup(this.props.initialPopups[i], true);
+      this.addPopup(this.props.initialPopups[i]);
     }
     this.updatePopups();
     this.map.off('click', this.onMapLoad);
+  }
+
+  addDrawIfNeeded() {
+    if (!this.draw) {
+      const modes = MapboxDraw.modes;
+      if (this.props.drawingModes && this.props.drawingModes.length > 0) {
+        this.props.drawingModes.forEach((mode) => {
+          modes[mode.name] = mode.mode;
+        });
+      }
+      modes.static = StaticMode;
+      const drawOptions = {displayControlsDefault: false, modes: modes, defaultMode: STATIC_MODE};
+      this.draw = new MapboxDraw(drawOptions);
+      this.map.addControl(this.draw);
+    }
   }
 
   /** Initialize the map */
@@ -189,6 +231,8 @@ export class MapboxGL extends React.Component {
     if (mapboxgl) {
       mapboxgl.accessToken = this.props.mapbox.accessToken;
       this.map = new mapboxgl.Map({
+        minZoom: getKey(this.props.map.metadata, MIN_ZOOM_KEY),
+        maxZoom: getKey(this.props.map.metadata, MAX_ZOOM_KEY),
         renderWorldCopies: this.props.wrapX,
         container: this.mapdiv,
         style: this.props.map,
@@ -200,7 +244,7 @@ export class MapboxGL extends React.Component {
     if (this.map) {
       this.props.setSize([this.mapdiv.offsetWidth, this.mapdiv.offsetHeight], this.map);
 
-      this.props.setProjection('EPSG:3857');
+      this.props.setProjection(this.props.projection);
 
       this.map.on('resize', () => {
         this.props.setSize([this.mapdiv.offsetWidth, this.mapdiv.offsetHeight], this.map);
@@ -225,30 +269,28 @@ export class MapboxGL extends React.Component {
     }
     // check for any interactions
     if (this.props.drawing && this.props.drawing.interaction && this.map) {
+      this.addDrawIfNeeded();
       this.updateInteraction(this.props.drawing);
     }
   }
 
   /** Callback for finished drawings, converts the event's feature
    *  to GeoJSON and then passes the relevant information on to
-   *  this.props.onFeatureDrawn, this.props.onFeatureModified,
-   *  or this.props.onFeatureSelected.
+   *  this.props.onFeatureDrawn, this.props.onFeatureModified.
    *
-   *  @param {string} eventType One of 'drawn', 'modified', or 'selected'.
+   *  @param {string} eventType One of 'drawn', 'modified'.
    *  @param {string} sourceName Name of the geojson source.
-   *  @param {Object} feature OpenLayers feature object.
+   *  @param {Object} collection GeoJSON feature collection.
    *
    */
-  onFeatureEvent(eventType, sourceName, feature) {
-    if (feature !== undefined) {
+  onFeatureEvent(eventType, sourceName, collection) {
+    if (collection !== undefined) {
       // Pass on feature drawn this map object, the target source,
       //  and the drawn feature.
       if (eventType === 'drawn') {
-        this.props.onFeatureDrawn(this, sourceName, feature);
+        this.props.onFeatureDrawn(this, sourceName, collection);
       } else if (eventType === 'modified') {
-        this.props.onFeatureModified(this, sourceName, feature);
-      } else if (eventType === 'selected') {
-        this.props.onFeatureSelected(this, sourceName, feature);
+        this.props.onFeatureModified(this, sourceName, collection);
       }
     }
   }
@@ -263,18 +305,52 @@ export class MapboxGL extends React.Component {
     }
   }
 
-  onDrawCreate(evt, drawingProps, draw, defaultMode) {
-    this.onFeatureEvent('drawn', drawingProps.sourceName, evt.features[0]);
+  onDrawCreate(evt, mode, options = {}) {
+    this.onFeatureEvent('drawn', this.props.drawing.sourceName, {type: 'FeatureCollection', features: evt.features});
+    const draw = this.draw;
     window.setTimeout(function() {
       // allow to draw more features
-      draw.changeMode(defaultMode);
+      draw.changeMode(mode, options);
+    }, 0);
+  }
+  onDrawModify(evt, mode, options = {}) {
+    this.onFeatureEvent('modified', this.props.drawing.sourceName, {type: 'FeatureCollection', features: evt.features});
+    const draw = this.draw;
+    window.setTimeout(function() {
+      draw.changeMode(mode, options);
     }, 0);
   }
 
-  onDrawRender(measure) {
-    const collection = measure.getAll();
+  onDrawRender(evt) {
+    const collection = this.draw.getAll();
     if (collection.features.length > 0) {
       this.props.setMeasureGeometry(collection.features[0].geometry);
+    }
+  }
+
+  setMode(defaultMode, customMode) {
+    return customMode ? customMode : defaultMode;
+  }
+
+  optionsForMode(mode, evt) {
+    if (mode === DIRECT_SELECT_MODE) {
+      return {featureId: evt.features[0].id};
+    }
+    return {};
+  }
+
+  modeOptions(modeOptions) {
+    return modeOptions ? modeOptions : {};
+  }
+
+  addFeaturesToDrawForSource(sourceName) {
+    if (this.draw) {
+      this.draw.deleteAll();
+      if (this.props.map.sources[sourceName] && this.props.map.sources[sourceName].data && this.props.map.sources[sourceName].data.features) {
+        this.props.map.sources[sourceName].data.features.forEach((feature) => {
+          this.draw.add(feature);
+        });
+      }
     }
   }
 
@@ -287,31 +363,47 @@ export class MapboxGL extends React.Component {
       }
       this.activeInteractions = null;
     }
-    let defaultMode;
     if (INTERACTIONS.drawing.includes(drawingProps.interaction)) {
-      defaultMode = this.getMode(drawingProps.interaction);
-      const drawOptions = {displayControlsDefault: false, defaultMode};
-      const draw = new MapboxDraw(drawOptions);
-      this.map.on('draw.create', (evt) => {
-        this.onDrawCreate(evt, drawingProps, draw, defaultMode);
-      });
-      this.activeInteractions = [draw];
+      this.addFeaturesToDrawForSource(drawingProps.sourceName);
+      this.currentMode = this.setMode(this.getMode(drawingProps.interaction), drawingProps.currentMode);
+      this.afterMode = this.setMode(this.currentMode, drawingProps.afterMode);
+      this.draw.changeMode(this.currentMode, this.modeOptions(drawingProps.currentModeOptions));
+    } else if (INTERACTIONS.modify === drawingProps.interaction || INTERACTIONS.select === drawingProps.interaction) {
+      this.addFeaturesToDrawForSource(drawingProps.sourceName);
+      this.currentMode = this.setMode(SIMPLE_SELECT_MODE, drawingProps.currentMode);
+      this.draw.changeMode(this.currentMode, this.modeOptions(drawingProps.currentModeOptions));
+      this.afterMode = this.setMode(DIRECT_SELECT_MODE, drawingProps.afterMode);
     } else if (INTERACTIONS.measuring.includes(drawingProps.interaction)) {
+      this.addFeaturesToDrawForSource(drawingProps.sourceName);
       // clear the previous measure feature.
       this.props.clearMeasureFeature();
       // The measure interactions are the same as the drawing interactions
       // but are prefixed with "measure:"
       const measureType = drawingProps.interaction.split(':')[1];
-      defaultMode = this.getMode(measureType);
-      const measure = new MapboxDraw({
-        displayControlsDefault: false,
-        defaultMode,
-      });
-      this.map.on('draw.render', (evt) => {
-        this.onDrawRender(measure);
-      });
-
-      this.activeInteractions = [measure];
+      this.currentMode = this.setMode(this.getMode(measureType), drawingProps.currentMode);
+      this.draw.changeMode(this.currentMode, this.modeOptions(drawingProps.currentModeOptions));
+      if (!this.addedMeasurementListener) {
+        this.map.on('draw.render', (evt) => {
+          this.onDrawRender(evt);
+        });
+        this.addedMeasurementListener = true;
+      }
+    } else {
+      if (this.draw) {
+        this.draw.changeMode(STATIC_MODE);
+      }
+    }
+    if (drawingProps.sourceName) {
+      const drawCreate = (evt) => {
+        this.onDrawCreate(evt, this.afterMode, this.optionsForMode(this.afterMode, evt));
+      };
+      const drawModify =  (evt) => {
+        this.onDrawModify(evt, this.afterMode, this.optionsForMode(this.afterMode, evt));
+      };
+      this.map.off('draw.create', drawCreate);
+      this.map.on('draw.create', drawCreate);
+      this.map.off('draw.update', drawModify);
+      this.map.on('draw.update', drawModify);
     }
 
     if (this.activeInteractions) {
@@ -347,13 +439,8 @@ export class MapboxGL extends React.Component {
     const size = ReactDOM.findDOMNode(elem).getBoundingClientRect();
     const yTransform = size.height / 2 + 11;
     const xTransform = size.width / 2 - 48;
-    // TODO do not use mapbox internals here
     if (overlay) {
-      const offset = new mapboxgl.Point.convert([xTransform, -yTransform]);
-      overlay._offset = offset;
-      overlay._update();
-      // TODO use when this fix is in a release
-      //overlay.setOffset([xTransform, -yTransform]);
+      overlay.setOffset([xTransform, -yTransform]);
     }
   }
 
@@ -380,135 +467,16 @@ export class MapboxGL extends React.Component {
       overlays_to_remove[i].remove();
     }
   }
-
-  render() {
-    let className = 'sdk-map';
-    if (this.props.className) {
-      className = `${className} ${this.props.className}`;
-    }
-    return (
-      <div style={this.props.style} ref={(c) => {
-        this.mapdiv = c;
-      }} className={className}>
-        <div className="controls">
-          {this.props.children}
-        </div>
-      </div>
-    );
-  }
 }
 
 MapboxGL.propTypes = {
-  /** Should we wrap the world? If yes, data will be repeated in all worlds. */
-  wrapX: PropTypes.bool,
-  /** Should we handle map hover to show mouseposition? */
-  hover: PropTypes.bool,
-  /** Map configuration, modelled after the Mapbox Style specification. */
-  map: PropTypes.shape({
-    /** Center of the map. */
-    center: PropTypes.array,
-    /** Zoom level of the map. */
-    zoom: PropTypes.number,
-    /** Rotation of the map in degrees. */
-    bearing: PropTypes.number,
-    /** Extra information about the map. */
-    metadata: PropTypes.object,
-    /** List of map layers. */
-    layers: PropTypes.array,
-    /** List of layer sources. */
-    sources: PropTypes.object,
-    /** Sprite sheet to use. */
-    sprite: PropTypes.string,
-  }),
-  /** Child components. */
-  children: PropTypes.oneOfType([
-    PropTypes.arrayOf(PropTypes.node),
-    PropTypes.node
-  ]),
-  /** Mapbox specific configuration. */
-  mapbox: PropTypes.shape({
-    /** Base url to use for mapbox:// substitutions. */
-    baseUrl: PropTypes.string,
-    /** Access token for the Mapbox account to use. */
-    accessToken: PropTypes.string,
-  }),
-  /** Style configuration object. */
-  style: PropTypes.object,
-  /** Css className. */
-  className: PropTypes.string,
-  /** Drawing specific configuration. */
-  drawing: PropTypes.shape({
-    /** Current interaction to use for drawing. */
-    interaction: PropTypes.string,
-    /** Current source name to use for drawing. */
-    sourceName: PropTypes.string,
-  }),
-  /** Initial popups to display in the map. */
-  initialPopups: PropTypes.arrayOf(PropTypes.object),
-  /** setView callback function, triggered on moveend. */
-  setView: PropTypes.func,
-  /** setMousePosition callback function, triggered on mousemove. */
-  setMousePosition: PropTypes.func,
-  /** setProjection callback function. */
-  setProjection: PropTypes.func,
-  /** Should we include features when the map is clicked? */
-  includeFeaturesOnClick: PropTypes.bool,
-  /** onClick callback function, triggered on singleclick. */
-  onClick: PropTypes.func,
-  /** onFeatureDrawn callback, triggered on drawend of the draw interaction. */
-  onFeatureDrawn: PropTypes.func,
-  /** onFeatureModified callback, triggered on modifyend of the modify interaction. */
-  onFeatureModified: PropTypes.func,
-  /** onFeatureSelected callback, triggered on select event of the select interaction. */
-  onFeatureSelected: PropTypes.func,
-  /** setMeasureGeometry callback, called when the measure geometry changes. */
-  setMeasureGeometry: PropTypes.func,
-  /** clearMeasureFeature callback, called when the measure feature is cleared. */
-  clearMeasureFeature: PropTypes.func,
+  ...MapCommon.propTypes,
+  /** Initial drawing modes that are available for drawing */
+  drawingModes: PropTypes.arrayOf(PropTypes.object),
 };
 
 MapboxGL.defaultProps = {
-  wrapX: true,
-  hover: true,
-  map: {
-    center: [0, 0],
-    zoom: 2,
-    bearing: 0,
-    metadata: {},
-    layers: [],
-    sources: {},
-    sprite: undefined,
-  },
-  drawing: {
-    interaction: null,
-    source: null,
-  },
-  mapbox: {
-    baseUrl: '',
-    accessToken: '',
-  },
-  initialPopups: [],
-  setView: () => {
-    // swallow event.
-  },
-  setSize: () => {},
-  setMousePosition: () => {
-    // swallow event.
-  },
-  setProjection: () => {},
-  includeFeaturesOnClick: false,
-  onClick: () => {
-  },
-  onFeatureDrawn: () => {
-  },
-  onFeatureModified: () => {
-  },
-  onFeatureSelected: () => {
-  },
-  setMeasureGeometry: () => {
-  },
-  clearMeasureFeature: () => {
-  },
+  ...MapCommon.defaultProps,
 };
 
 function mapStateToProps(state) {
@@ -531,14 +499,14 @@ function mapDispatchToProps(dispatch) {
   return {
     updateLayer: (layerId, layerConfig) => {
     },
-    setView: (map) => {
+    setView: (map, projection) => {
       const center = map.getCenter().toArray();
       const bearing = map.getBearing();
       const zoom = map.getZoom();
       dispatch(setView(center, zoom));
       dispatch(setBearing(bearing));
       dispatch(setMapExtent(getMapExtent(map)));
-      dispatch(setResolution(getResolutionForZoom(zoom + 1)));
+      dispatch(setResolution(getResolutionForZoom(zoom, projection)));
     },
     setSize: (size, map) => {
       dispatch(setMapSize(size));

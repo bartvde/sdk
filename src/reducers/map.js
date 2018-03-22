@@ -16,9 +16,9 @@
  */
 
 import createFilter from '@mapbox/mapbox-gl-style-spec/feature_filter';
-import {getGroup, getLayerIndexById, reprojectGeoJson} from '../util';
+import {getGroup, getLayerIndexById, reprojectGeoJson, getResolutionForExtent, getZoomForResolution} from '../util';
 import {MAP} from '../action-types';
-import {DEFAULT_ZOOM, LAYER_VERSION_KEY, SOURCE_VERSION_KEY, TITLE_KEY, DATA_VERSION_KEY, GROUP_KEY} from '../constants';
+import {DEFAULT_ZOOM, LAYER_VERSION_KEY, SOURCE_VERSION_KEY, TITLE_KEY, DATA_VERSION_KEY, GROUP_KEY, GROUPS_KEY} from '../constants';
 
 function defaultMetadata() {
   // define the metadata.
@@ -306,8 +306,8 @@ function clearLayerFilter(state, action) {
   const new_layers = [];
   for (let i = 0, ii = state.layers.length; i < ii; i++) {
     if (state.layers[i].id === action.layerId) {
-      // eslint-disable-next-line
-      const { filter, ...newProps } = state.layers[i];
+      const newProps = Object.assign({}, state.layers[i]);
+      delete newProps.filter;
       new_layers.push(newProps);
     } else {
       new_layers.push(state.layers[i]);
@@ -406,6 +406,9 @@ function removeSource(state, action) {
  */
 function changeData(state, sourceName, data) {
   const source = state.sources[sourceName];
+  if (!source) {
+    return state;
+  }
   const src_mixin = {};
 
   // update the individual source.
@@ -427,6 +430,9 @@ function changeData(state, sourceName, data) {
  */
 function addFeatures(state, action) {
   const source = state.sources[action.sourceName];
+  if (!source) {
+    return state;
+  }
   const data = source.data;
 
   // placeholder for the new data
@@ -485,6 +491,9 @@ function addFeatures(state, action) {
  */
 function clusterPoints(state, action) {
   const source = state.sources[action.sourceName];
+  if (!source) {
+    return state;
+  }
   const src_mixin = [];
   const cluster_settings = {};
 
@@ -518,6 +527,9 @@ function clusterPoints(state, action) {
 function removeFeatures(state, action) {
   // short hand the source source and the data
   const source = state.sources[action.sourceName];
+  if (!source) {
+    return state;
+  }
   const data = source.data;
 
   // filter function, features which MATCH this function will be REMOVED.
@@ -639,6 +651,38 @@ function updateMetadata(state, action) {
   });
 }
 
+/** Add a group to the map's metadata section.
+ *  @param {Object} state The redux state.
+ *  @param {Object} action The action object.
+ *
+ *  @returns {Object} The new state object.
+ */
+function addGroup(state, action) {
+  const groups = state.metadata ? Object.assign({}, state.metadata[GROUPS_KEY]) : {};
+  groups[action.id] = action.config;
+  const metadata = {};
+  metadata[GROUPS_KEY] = groups;
+  return Object.assign({}, state, {
+    metadata: Object.assign({}, state.metadata, metadata),
+  });
+}
+
+/** Remove a group from the map's metadata section.
+ *  @param {Object} state The redux state.
+ *  @param {Object} action The action object.
+ *
+ *  @returns {Object} The new state object.
+ */
+function removeGroup(state, action) {
+  const groups = state.metadata ? Object.assign({}, state.metadata[GROUPS_KEY]) : {};
+  delete groups[action.id];
+  const metadata = {};
+  metadata[GROUPS_KEY] = groups;
+  return Object.assign({}, state, {
+    metadata: Object.assign({}, state.metadata, metadata),
+  });
+}
+
 /** Update a source's definition.
  *  This is a heavy-handed operation that will
  *  just mixin whatever is in the new object.
@@ -664,10 +708,30 @@ function updateSource(state, action) {
   }, metadata);
 }
 
+/** Set the zoom level of the map.
+ *  @param {Object} state Current state.
+ *  @param {Object} action Action to handle.
+ *
+ *  @returns {Object} The new state.
+ */
 function setZoom(state, action) {
   let zoom = Math.min(DEFAULT_ZOOM.MAX, action.zoom);
   zoom = Math.max(DEFAULT_ZOOM.MIN, zoom);
   return Object.assign({}, state, {zoom});
+}
+
+/** Fit the extent on the map. Can be used to zoom to a layer for instance.
+ *  @param {Object} state Current state.
+ *  @param {Object} action Action to handle.
+ *
+ *  @returns {Object} The new state.
+ */
+function fitExtent(state, action) {
+  const extent = action.extent;
+  const resolution = getResolutionForExtent(extent, action.size, action.projection);
+  const zoom = getZoomForResolution(resolution, action.projection);
+  const center = [(extent[0] + extent[2]) / 2, (extent[1] + extent[3]) / 2];
+  return Object.assign({}, state, {center, zoom});
 }
 
 /** Main reducer.
@@ -690,6 +754,8 @@ export default function MapReducer(state = defaultState, action) {
       return setZoom(state, {zoom: state.zoom - 1});
     case MAP.SET_ZOOM:
       return setZoom(state, action);
+    case MAP.FIT_EXTENT:
+      return fitExtent(state, action);
     case MAP.SET_NAME:
       return Object.assign({}, state, {name: action.name});
     case MAP.SET_GLYPHS:
@@ -728,6 +794,10 @@ export default function MapReducer(state = defaultState, action) {
       return clusterPoints(state, action);
     case MAP.UPDATE_METADATA:
       return updateMetadata(state, action);
+    case MAP.ADD_GROUP:
+      return addGroup(state, action);
+    case MAP.REMOVE_GROUP:
+      return removeGroup(state, action);
     case MAP.UPDATE_SOURCE:
       return updateSource(state, action);
     case MAP.MOVE_GROUP:

@@ -5,15 +5,15 @@
 /* global it, describe, expect, beforeEach */
 
 import React from 'react';
-import VectorSource from 'ol/source/vector';
+import VectorSource from 'ol/source/Vector';
 import {createStore, combineReducers} from 'redux';
 import {mount, configure} from 'enzyme';
 import  Adapter from 'enzyme-adapter-react-16';
 
-import SdkClusterSource from '../../src/source/cluster';
-import SdkMap from '../../src/components/map';
-import MapReducer from '../../src/reducers/map';
-import * as MapActions from '../../src/actions/map';
+import SdkClusterSource from '@boundlessgeo/sdk/source/cluster';
+import SdkMap from '@boundlessgeo/sdk/components/map';
+import MapReducer from '@boundlessgeo/sdk/reducers/map';
+import * as MapActions from '@boundlessgeo/sdk/actions/map';
 
 configure({adapter: new Adapter()});
 
@@ -85,17 +85,23 @@ describe('tests for cluster map sources', () => {
         const feature = cluster.getFeatures()[0];
         expect(feature.getGeometry().getCoordinates()[0]).not.toBe(5.5);
         store.dispatch(MapActions.setClusterRadius(src_name, 10));
-        cluster = map.sources[src_name];
-        expect(cluster.getDistance()).toBe(10);
-        store.dispatch(MapActions.clusterPoints(src_name, false));
-        cluster = map.sources[src_name];
-        expect(cluster).toBeInstanceOf(VectorSource);
-        // re cluster and check radius
-        store.dispatch(MapActions.clusterPoints(src_name, true));
-        cluster = map.sources[src_name];
-        expect(cluster).toBeInstanceOf(SdkClusterSource);
-        expect(cluster.getDistance()).toBe(10);
-        done();
+        window.setTimeout(() => {
+          cluster = map.sources[src_name];
+          expect(cluster.getDistance()).toBe(10);
+          store.dispatch(MapActions.clusterPoints(src_name, false));
+          window.setTimeout(() => {
+            cluster = map.sources[src_name];
+            expect(cluster).toBeInstanceOf(VectorSource);
+            // re cluster and check radius
+            store.dispatch(MapActions.clusterPoints(src_name, true));
+            window.setTimeout(() => {
+              cluster = map.sources[src_name];
+              expect(cluster).toBeInstanceOf(SdkClusterSource);
+              expect(cluster.getDistance()).toBe(10);
+              done();
+            }, 0);
+          }, 0);
+        }, 0);
       }, 100);
     }, 100);
   });

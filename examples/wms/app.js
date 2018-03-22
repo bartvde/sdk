@@ -9,7 +9,7 @@ import thunkMiddleware from 'redux-thunk';
 import React from 'react';
 import ReactDOM from 'react-dom';
 import {Provider} from 'react-redux';
-import WMSCapabilitiesFormat from 'ol/format/wmscapabilities';
+import WMSCapabilitiesFormat from 'ol/format/WMSCapabilities';
 
 import RendererSwitch from '../rendererswitch';
 import SdkZoomControl from '@boundlessgeo/sdk/components/map/zoom-control';
@@ -74,6 +74,8 @@ function main() {
           }
           layers={root.Layer}
         />, document.getElementById('add-wms'));
+      }).catch((exception) => {
+        console.error('An error occurred.', exception);
       });
   };
 
@@ -105,6 +107,8 @@ function main() {
               features={features}
             />);
           }
+        }).catch((exception) => {
+          console.error('An error occurred.', exception);
         });
       }}>
       <SdkZoomControl style={{position: 'absolute', top: 20, left: 20}} />

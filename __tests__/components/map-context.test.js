@@ -4,21 +4,21 @@ import React from 'react';
 import {mount, configure} from 'enzyme';
 import  Adapter from 'enzyme-adapter-react-16';
 
-import TileLayer from 'ol/layer/tile';
-import TileWMSSource from 'ol/source/tilewms';
-import XYZSource from 'ol/source/xyz';
+import TileLayer from 'ol/layer/Tile';
+import TileWMSSource from 'ol/source/TileWMS';
+import XYZSource from 'ol/source/XYZ';
 
 import {createStore, combineReducers, applyMiddleware} from 'redux';
 import thunkMiddleware from 'redux-thunk';
 
-import ConnectedMap from '../../src/components/map';
-import MapReducer from '../../src/reducers/map';
-import * as MapActions from '../../src/actions/map';
+import ConnectedMap from '@boundlessgeo/sdk/components/map';
+import MapReducer from '@boundlessgeo/sdk/reducers/map';
+import * as MapActions from '@boundlessgeo/sdk/actions/map';
 
 configure({adapter: new Adapter()});
 
 describe('Map component context documents', () => {
-  it('should correctly reload context documents', () => {
+  it('should correctly reload context documents', (done) => {
     const store = createStore(combineReducers({
       map: MapReducer,
     }), applyMiddleware(thunkMiddleware));
@@ -47,36 +47,41 @@ describe('Map component context documents', () => {
       ],
     };
     store.dispatch(MapActions.setContext({json: wmsJson}));
-    let layers = map.map.getLayers().getArray();
-    expect(layers[0]).toBeInstanceOf(TileLayer);
-    expect(layers[0].getSource()).toBeInstanceOf(TileWMSSource);
-    const osmJson = {
-      version: 8,
-      name: 'osm',
-      center: [-98.78906130124426, 37.92686191312036],
-      zoom: 4,
-      sources: {
-        osm: {
-          type: 'raster',
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors.',
-          tileSize: 256,
-          tiles: [
-            'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-            'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
-            'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
-          ],
+    window.setTimeout(() => {
+      let layers = map.map.getLayers().getArray();
+      expect(layers[0]).toBeInstanceOf(TileLayer);
+      expect(layers[0].getSource()).toBeInstanceOf(TileWMSSource);
+      const osmJson = {
+        version: 8,
+        name: 'osm',
+        center: [-98.78906130124426, 37.92686191312036],
+        zoom: 4,
+        sources: {
+          osm: {
+            type: 'raster',
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors.',
+            tileSize: 256,
+            tiles: [
+              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            ],
+          },
         },
-      },
-      layers: [
-        {
-          id: 'osm',
-          source: 'osm',
-        },
-      ],
-    };
-    store.dispatch(MapActions.setContext({json: osmJson}));
-    layers = map.map.getLayers().getArray();
-    expect(layers[0]).toBeInstanceOf(TileLayer);
-    expect(layers[0].getSource()).toBeInstanceOf(XYZSource);
+        layers: [
+          {
+            id: 'osm',
+            source: 'osm',
+          },
+        ],
+      };
+      store.dispatch(MapActions.setContext({json: osmJson}));
+      window.setTimeout(() => {
+        layers = map.map.getLayers().getArray();
+        expect(layers[0]).toBeInstanceOf(TileLayer);
+        expect(layers[0].getSource()).toBeInstanceOf(XYZSource);
+        done();
+      }, 0);
+    }, 0);
   });
 });

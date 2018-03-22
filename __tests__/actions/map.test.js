@@ -4,9 +4,9 @@ import configureMockStore from 'redux-mock-store';
 import nock from 'nock';
 import thunk from 'redux-thunk';
 
-import * as actions from '../../src/actions/map';
-import {MAP} from '../../src/action-types';
-import {TITLE_KEY, TIME_KEY} from '../../src/constants';
+import * as actions from '@boundlessgeo/sdk/actions/map';
+import {MAP} from '@boundlessgeo/sdk/action-types';
+import {TITLE_KEY, TIME_KEY} from '@boundlessgeo/sdk/constants';
 
 const middlewares = [thunk];
 const mockStore = configureMockStore(middlewares);
@@ -55,6 +55,19 @@ describe('actions', () => {
       name,
     };
     expect(actions.setMapName(name)).toEqual(expectedAction);
+  });
+
+  it('should create an action to fit an extemt', () => {
+    const extent = [-45, 0, 20, 25];
+    const size = [800, 600];
+    const projection = 'EPSG:3857';
+    const expectedAction = {
+      type: MAP.FIT_EXTENT,
+      extent,
+      size,
+      projection,
+    };
+    expect(actions.fitExtent(extent, size, projection)).toEqual(expectedAction);
   });
 
   it('should create an action to set the map bearing', () => {
@@ -177,10 +190,11 @@ describe('actions', () => {
       type: MAP.ADD_FEATURES,
       sourceName,
       features,
-      position
+      position,
     };
     expect(actions.addFeatures(sourceName, features)).toEqual(expectedAction);
   });
+
   it('should create an action to add features at select position', () => {
     const sourceName = 'tegola';
     const features = [
@@ -200,7 +214,7 @@ describe('actions', () => {
       type: MAP.ADD_FEATURES,
       sourceName,
       features,
-      position
+      position,
     };
     expect(actions.addFeatures(sourceName, features, position)).toEqual(expectedAction);
   });
@@ -315,6 +329,30 @@ describe('actions', () => {
 
     expect(actions.setGlyphs(glyphs)).toEqual(expectedAction);
   });
+
+  it('should create an action to add a group', () => {
+    const id = 'my_group';
+    const config = {
+      name: 'My Group',
+      exclusive: false,
+    };
+    const expectedAction = {
+      type: MAP.ADD_GROUP,
+      id,
+      config,
+    };
+    expect(actions.addGroup(id, config)).toEqual(expectedAction);
+  });
+
+  it('should create an action to remove a group', () => {
+    const id = 'my_group';
+    const expectedAction = {
+      type: MAP.REMOVE_GROUP,
+      id,
+    };
+    expect(actions.removeGroup(id)).toEqual(expectedAction);
+  });
+
 });
 
 describe('async actions', () => {
@@ -492,7 +530,7 @@ describe('async actions', () => {
     const sourceName = 'my-source';
     const sourceDef = {
       type: 'vector',
-      url: 'http://localhost/geoserver/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=application%2Fx-protobuf%3Btype%3Dmapbox-vector&TRANSPARENT=TRUE&LAYERS=my-layer&WIDTH=256&HEIGHT=256&CRS=EPSG%3A3857&BBOX={bbox-epsg-3857}',
+      tiles: ['http://localhost/geoserver/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=application%2Fx-protobuf%3Btype%3Dmapbox-vector&TRANSPARENT=TRUE&LAYERS=my-layer&WIDTH=256&HEIGHT=256&CRS=EPSG%3A3857&BBOX={bbox-epsg-3857}'],
     };
     expect(actions.addWmsSource(sourceName, 'http://localhost/geoserver/wms', 'my-layer')).toEqual({
       type: MAP.ADD_SOURCE,
@@ -505,7 +543,7 @@ describe('async actions', () => {
     const sourceName = 'my-source';
     const sourceDef = {
       type: 'vector',
-      url: 'http://localhost/geoserver/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=application%2Fx-protobuf%3Btype%3Dmapbox-vector&TRANSPARENT=TRUE&LAYERS=my-layer&WIDTH=512&HEIGHT=512&CRS=EPSG%3A4326&ACCESS_TOKEN=my-token&BBOX={bbox-epsg-3857}',
+      tiles: ['http://localhost/geoserver/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=application%2Fx-protobuf%3Btype%3Dmapbox-vector&TRANSPARENT=TRUE&LAYERS=my-layer&WIDTH=512&HEIGHT=512&CRS=EPSG%3A4326&ACCESS_TOKEN=my-token&BBOX={bbox-epsg-3857}'],
     };
     const options = {accessToken: 'my-token', projection: 'EPSG:4326', tileSize: 512};
     expect(actions.addWmsSource(sourceName, 'http://localhost/geoserver/wms', 'my-layer', options)).toEqual({
@@ -567,7 +605,7 @@ describe('async actions', () => {
     const options = {accessToken: 'my-token'};
     const sourceDef = {
       type: 'vector',
-      url: 'http://localhost/geoserver/gwc/service/tms/1.0.0/topp:states@EPSG%3A3857@pbf/{z}/{x}/{-y}.pbf?access_token=my-token',
+      tiles: ['http://localhost/geoserver/gwc/service/tms/1.0.0/topp:states@EPSG%3A3857@pbf/{z}/{x}/{-y}.pbf?access_token=my-token'],
     };
     expect(actions.addTmsSource(sourceName, url, layerName, options)).toEqual({
       type: MAP.ADD_SOURCE,
@@ -594,4 +632,5 @@ describe('async actions', () => {
       sourceDef,
     });
   });
+
 });

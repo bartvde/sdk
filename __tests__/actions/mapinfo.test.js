@@ -1,7 +1,7 @@
 /* global describe, it, expect */
 
-import * as actions from '../../src/actions/mapinfo';
-import {MAPINFO} from '../../src/action-types';
+import * as actions from '@boundlessgeo/sdk/actions/mapinfo';
+import {MAPINFO} from '@boundlessgeo/sdk/action-types';
 
 describe('test that mapinfo actions are properly created', () => {
 
@@ -28,6 +28,25 @@ describe('test that mapinfo actions are properly created', () => {
       type: MAPINFO.SET_MOUSE_POSITION,
       lngLat,
       coordinate,
+    });
+  });
+
+  it('should issue an action to request a map redraw', () => {
+    expect(actions.requestRedraw()).toEqual({
+      type: MAPINFO.REQUEST_REDRAW,
+    });
+  });
+
+  it('should issue an action to set a source error', () => {
+    expect(actions.setSourceError('test')).toEqual({
+      type: MAPINFO.SET_SOURCE_ERROR,
+      srcName: 'test'
+    });
+  });
+
+  it('should clear the source errors', () => {
+    expect(actions.clearSourceErrors()).toEqual({
+      type: MAPINFO.CLEAR_SOURCE_ERRORS,
     });
   });
 

@@ -5,14 +5,22 @@ import {shallow, mount, configure} from 'enzyme';
 import  Adapter from 'enzyme-adapter-react-16';
 import {createStore, combineReducers} from 'redux';
 
-import MapReducer from '../../src/reducers/map';
-import MapInfoReducer from '../../src/reducers/mapinfo';
-import DrawingReducer from '../../src/reducers/drawing';
-import ConnectedMap, {MapboxGL, getMapExtent} from '../../src/components/mapboxgl';
-import SdkPopup from '../../src/components/map/popup';
+import MapReducer from '@boundlessgeo/sdk/reducers/map';
+import MapInfoReducer from '@boundlessgeo/sdk/reducers/mapinfo';
+import DrawingReducer from '@boundlessgeo/sdk/reducers/drawing';
+import ConnectedMap, {MapboxGL, getMapExtent} from '@boundlessgeo/sdk/components/mapboxgl';
+import SdkPopup from '@boundlessgeo/sdk/components/map/popup';
 
 configure({adapter: new Adapter()});
 
+const createMapDrawMock = () => {
+  return {
+    changeMode: () => {},
+    getAll: () => {},
+    add: () => {},
+    deleteAll: () => {}
+  };
+};
 const createMapMock = () => {
   return {
     getSource: () => {
@@ -25,6 +33,10 @@ const createMapMock = () => {
     setCenter: () => {},
     setBearing: () => {},
     setZoom: () => {},
+    addControl: () => {},
+    on: () => {},
+    off: () => {},
+    resize: () => {},
     queryRenderedFeatures: () => {
       return [{
         layer: {
@@ -78,6 +90,9 @@ describe('MapboxGL component', () => {
     const sources = {
       geojson: {
         type: 'geojson',
+        data: {
+          features: []
+        }
       },
     };
     const layers = [];
@@ -97,6 +112,9 @@ describe('MapboxGL component', () => {
     const map = wrapper.instance();
     // mock up our GL map
     map.map = createMapMock();
+    map.map.on = () => {};
+    map.map.off = () => {};
+    map.draw = createMapDrawMock();
     spyOn(map.map, 'setStyle');
     spyOn(map.map, 'setCenter');
     spyOn(map.map, 'setBearing');
@@ -122,13 +140,11 @@ describe('MapboxGL component', () => {
       types.push(type);
     };
     map.map.on = on;
-    const addControl = () => {};
-    map.map.addControl = addControl;
     const removeControl = () => {};
     map.map.removeControl = removeControl;
     spyOn(map.map, 'removeControl');
-    map.shouldComponentUpdate(nextProps);
-    expect(types).toEqual(['draw.create']);
+    map.componentWillReceiveProps(nextProps);
+    expect(types).toEqual(['draw.create', 'draw.update']);
     expect(map.map.setStyle).toHaveBeenCalled();
     expect(map.map.setCenter).toHaveBeenCalled();
     expect(map.map.setBearing).toHaveBeenCalled();
@@ -139,12 +155,11 @@ describe('MapboxGL component', () => {
       interaction: 'Polygon',
       sourceName: 'geojson',
     };
-    map.shouldComponentUpdate(nextProps);
+    map.componentWillReceiveProps(nextProps);
     expect(map.updateInteraction).toHaveBeenCalled();
-    expect(map.map.removeControl).toHaveBeenCalled();
     delete nextProps.map.metadata;
     nextProps.map.sources = {};
-    map.shouldComponentUpdate(nextProps);
+    map.componentWillReceiveProps(nextProps);
     expect(map.sourcesVersion).not.toBeDefined();
     expect(map.layersVersion).not.toBeDefined();
   });
@@ -256,10 +271,13 @@ describe('MapboxGL component', () => {
     spyOn(props, 'onFeatureDrawn');
     const wrapper = mount(<MapboxGL {...props} />);
     const map = wrapper.instance();
-    const feature = {
-      type: 'Feature',
+    const collection = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+      }],
     };
-    map.onFeatureEvent('drawn', 'foo', feature);
+    map.onFeatureEvent('drawn', 'foo', collection);
     expect(props.onFeatureDrawn).toHaveBeenCalled();
   });
 
@@ -271,26 +289,14 @@ describe('MapboxGL component', () => {
     spyOn(props, 'onFeatureModified');
     const wrapper = mount(<MapboxGL {...props} />);
     const map = wrapper.instance();
-    const feature = {
-      type: 'Feature',
+    const collection = {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+      }],
     };
-    map.onFeatureEvent('modified', 'foo', feature);
+    map.onFeatureEvent('modified', 'foo', collection);
     expect(props.onFeatureModified).toHaveBeenCalled();
-  });
-
-  it('selected event should be triggered', () => {
-    const onFeatureSelected = () => {};
-    const props = {
-      onFeatureSelected,
-    };
-    spyOn(props, 'onFeatureSelected');
-    const wrapper = mount(<MapboxGL {...props} />);
-    const map = wrapper.instance();
-    const feature = {
-      type: 'Feature',
-    };
-    map.onFeatureEvent('selected', 'foo', feature);
-    expect(props.onFeatureSelected).toHaveBeenCalled();
   });
 
   it('configureMap sets listeners', () => {
@@ -469,13 +475,93 @@ describe('MapboxGL component', () => {
     const map = wrapper.instance();
     // mock up our GL map
     map.map = createMapMock();
+    map.draw = createMapDrawMock();
     const on = () => {};
     map.map.on = on;
-    const addControl = () => {};
-    map.map.addControl = addControl;
-    spyOn(map.map, 'addControl');
+    spyOn(map.draw, 'changeMode');
     map.updateInteraction({interaction: 'Polygon'});
-    expect(map.map.addControl).toHaveBeenCalled();
+    expect(map.draw.changeMode).toHaveBeenCalled();
+  });
+
+  it('updateInteraction adds the features to draw', () => {
+    const sources = {
+      geojson: {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [{id: '1'}]
+        }
+      },
+    };
+    const layers = [];
+    const metadata = {
+      'bnd:source-version': 0,
+      'bnd:layer-version': 0,
+      'bnd:data-version:geojson': 0,
+    };
+
+    const center = [0, 0];
+    const zoom = 2;
+    const apiKey = 'foo';
+    const drawing = {
+      interaction: 'Point'
+    };
+    const props = {
+      drawing,
+      mapbox: {accessToken: apiKey},
+      map: {center, zoom, sources, layers, metadata}
+    };
+    const wrapper = mount(<MapboxGL {...props} />);
+    const map = wrapper.instance();
+    // mock up our GL map
+    map.map = createMapMock();
+    map.draw = createMapDrawMock();
+    const on = () => {};
+    map.map.on = on;
+    spyOn(map.draw, 'deleteAll');
+    spyOn(map.draw, 'add');
+    map.updateInteraction({interaction: 'Polygon', sourceName: 'geojson'});
+    expect(map.draw.deleteAll).toHaveBeenCalled();
+    expect(map.draw.add).toHaveBeenCalled();
+  });
+
+  it('changes the mode with options', () => {
+    const sources = {
+      geojson: {
+        type: 'geojson',
+      },
+    };
+    const layers = [];
+    const metadata = {
+      'bnd:source-version': 0,
+      'bnd:layer-version': 0,
+      'bnd:data-version:geojson': 0,
+    };
+
+    const center = [0, 0];
+    const zoom = 2;
+    const apiKey = 'foo';
+    const drawing = {
+      interaction: 'Point'
+    };
+    const props = {
+      drawing,
+      mapbox: {accessToken: apiKey},
+      map: {center, zoom, sources, layers, metadata}
+    };
+    const modeOptions = {
+      custom: true
+    };
+    const wrapper = mount(<MapboxGL {...props} />);
+    const map = wrapper.instance();
+    // mock up our GL map
+    map.map = createMapMock();
+    map.draw = createMapDrawMock();
+    const on = () => {};
+    map.map.on = on;
+    spyOn(map.draw, 'changeMode');
+    map.updateInteraction({interaction: 'Polygon', currentMode: 'customMode', currentModeOptions: modeOptions});
+    expect(map.draw.changeMode).toHaveBeenCalledWith('customMode', modeOptions);
   });
 
   it('updateInteraction with measure works correctly', () => {
@@ -506,13 +592,12 @@ describe('MapboxGL component', () => {
     const map = wrapper.instance();
     // mock up our GL map
     map.map = createMapMock();
+    map.draw = createMapDrawMock();
     const on = () => {};
     map.map.on = on;
-    const addControl = () => {};
-    map.map.addControl = addControl;
-    spyOn(map.map, 'addControl');
+    spyOn(map.draw, 'changeMode');
     map.updateInteraction({interaction: 'measure:LineString'});
-    expect(map.map.addControl).toHaveBeenCalled();
+    expect(map.draw.changeMode).toHaveBeenCalled();
   });
 
   it('should call setView', () => {
@@ -695,14 +780,18 @@ describe('MapboxGL component', () => {
     const map = wrapper.instance();
     // mock up our GL map
     map.map = createMapMock();
+    map.map.on = () => {};
+    map.map.off = () => {};
     spyOn(props, 'onFeatureDrawn');
     const draw = {
       changeMode: (mode) => {}
     };
     spyOn(draw, 'changeMode');
+    map.draw = draw;
+    map.componentWillReceiveProps({map: {sources: {}, metadata: {}, layers: []}, drawing: {sourceName: 'geosjon'}});
     map.onDrawCreate({
       features: [{}]
-    }, {sourceName: 'geosjon'}, draw, 'draw_polygon');
+    }, 'draw_polygon');
     window.setTimeout(function() {
       expect(draw.changeMode).toHaveBeenCalled();
       done();
@@ -735,15 +824,60 @@ describe('MapboxGL component', () => {
     const map = wrapper.instance();
     // mock up our GL map
     map.map = createMapMock();
-    map.onDrawRender({
-      getAll: () => {
-        return {features: [{geometry: {}}]};
-      }
-    });
+    map.draw = createMapDrawMock();
+    map.draw.getAll = () => {
+      return {features: [{geometry: {}}]};
+    };
+    map.onDrawRender({});
     window.setTimeout(function() {
       expect(props.setMeasureGeometry).toHaveBeenCalled();
       done();
     }, 0);
+  });
+
+  it('optionsForMode returns featureId object', () => {
+    const wrapper = shallow(<MapboxGL />);
+    const map = wrapper.instance();
+    // mock up our GL map
+    map.map = createMapMock();
+    map.draw = createMapDrawMock();
+    expect(map.optionsForMode('direct_select', {features: [{id: 1}]})).toEqual({featureId: 1});
+  });
+
+  it('setMode returns the currentMode if afterMode is not set', () => {
+    const wrapper = shallow(<MapboxGL />);
+    const map = wrapper.instance();
+    // mock up our GL map
+    map.map = createMapMock();
+    map.draw = createMapDrawMock();
+    expect(map.setMode('direct_select')).toEqual('direct_select');
+  });
+
+  it('setMode returns after if afterMode is set', () => {
+    const wrapper = shallow(<MapboxGL />);
+    const map = wrapper.instance();
+    // mock up our GL map
+    map.map = createMapMock();
+    map.draw = createMapDrawMock();
+    expect(map.setMode('direct_select', 'simple_select')).toEqual('simple_select');
+  });
+
+  it('default modes are simple_select and direct_select for modify interaction', () => {
+    const wrapper = shallow(<MapboxGL />);
+    const map = wrapper.instance();
+    // mock up our GL map
+    map.map = createMapMock();
+    map.map.on = () => {};
+    map.map.off = () => {};
+    map.draw = createMapDrawMock();
+    map.addedDrawListener = true;
+    const drawingProps = {
+      interaction: 'Modify',
+      sourceName: 'geojson',
+    };
+    map.updateInteraction(drawingProps);
+    expect(map.currentMode).toEqual('simple_select');
+    expect(map.afterMode).toEqual('direct_select');
   });
 
   it('setMeasureGeometry works correctly for LineString', (done) => {
@@ -755,11 +889,11 @@ describe('MapboxGL component', () => {
     const map = wrapper.instance().getWrappedInstance();
     // mock up our GL map
     map.map = createMapMock();
-    map.onDrawRender({
-      getAll: () => {
-        return {features: [{geometry: {type: 'LineString', coordinates: [[0, 10], [0, 20]]}}]};
-      }
-    });
+    map.draw = createMapDrawMock();
+    map.draw.getAll = () => {
+      return {features: [{geometry: {type: 'LineString', coordinates: [[0, 10], [0, 20]]}}]};
+    };
+    map.onDrawRender({});
     window.setTimeout(function() {
       expect(store.getState().draw.measureSegments).toEqual([1111.9508023353287]);
       done();
@@ -775,11 +909,11 @@ describe('MapboxGL component', () => {
     const map = wrapper.instance().getWrappedInstance();
     // mock up our GL map
     map.map = createMapMock();
-    map.onDrawRender({
-      getAll: () => {
-        return {features: [{geometry: {type: 'Polygon', coordinates: [[[0, 10], [0, 20], [10, 10], [10, 20], [0, 10]]]}}]};
-      }
-    });
+    map.draw = createMapDrawMock();
+    map.draw.getAll = () => {
+      return {features: [{geometry: {type: 'Polygon', coordinates: [[[0, 10], [0, 20], [10, 10], [10, 20], [0, 10]]]}}]};
+    };
+    map.onDrawRender({});
     window.setTimeout(function() {
       expect(store.getState().draw.measureSegments).toEqual([0.00014113929327614141]);
       done();

@@ -21,24 +21,32 @@ import {INTERACTIONS} from '../constants';
 /** Action to start an interaction on the map.
  *  @param {string} sourceName The name of the source on which the action takes place.
  *  @param {string} drawingType The type of drawing interaction.
+ *  @param {string} afterMode The mode to be used after the drawing interaction finishes.
+ *  @param {string} currentMode The mode to be used for drawing interaction.
+ *  @param {Object} currentModeOptions The mode options for the currentMode
  *
  *  @returns {Object} An action object to pass to the reducer.
  */
-export function startDrawing(sourceName, drawingType) {
+export function startDrawing(sourceName, drawingType, afterMode, currentMode, currentModeOptions) {
   return {
     type: DRAWING.START,
     interaction: drawingType,
     sourceName,
+    currentMode,
+    afterMode,
+    currentModeOptions,
   };
 }
 
 /** Short-hand action to start modify-feature
  *  @param {string} sourceName The name of the source to modify.
+ *  @param {string} afterMode The mode to be used after the drawing interaction finishes.
+ *  @param {string} currentMode The mode to be used for drawing interaction.
  *
  *  @returns {Object} Call to startDrawing()
  */
-export function startModify(sourceName) {
-  return startDrawing(sourceName, INTERACTIONS.modify);
+export function startModify(sourceName, afterMode, currentMode) {
+  return startDrawing(sourceName, INTERACTIONS.modify, afterMode, currentMode);
 }
 
 /** Short-hand action to start select-feature
@@ -51,19 +59,24 @@ export function startSelect(sourceName) {
 }
 
 /** Stop drawing / select / modify
+ *  @param {string} afterMode The mode to be used after the drawing interaction finishes.
+ *
  *  @returns {Object} An action object to pass to the reducer.
  */
-export function endDrawing() {
+export function endDrawing(afterMode) {
   return {
     type: DRAWING.END,
+    afterMode,
   };
 }
 
 /** These are just aliases to end drawing.
+ *  @param {string} afterMode The mode to be used after the drawing interaction finishes.
+ *
  *  @returns {Object} Call to endDrawing().
  */
-export function endModify() {
-  return endDrawing();
+export function endModify(afterMode) {
+  return endDrawing(afterMode);
 }
 
 /** These are just aliases to end drawing.
@@ -101,11 +114,79 @@ export function setMeasureFeature(feature, segments) {
   };
 }
 
+/** Finalize a measurement feature.
+ *
+ *  This is called when the measure feature is done.
+ *
+ *  @returns {Object} A measurement action.
+ */
+export function finalizeMeasureFeature() {
+  return {
+    type: DRAWING.FINALIZE_MEASURE_FEATURE,
+  };
+}
+
+/** Finish the measure geometry.
+ *
+ *  Turn the sketch feature into a permanent feature.
+ *
+ *  @returns {Object} A measurement action.
+ */
+export function finishMeasureGeometry() {
+  return {
+    type: DRAWING.FINISH_MEASURE_GEOMETRY,
+  };
+}
+
 /** Clear the measurement feature.
  *  @returns {Object} An action object to pass to the reducer.
  */
 export function clearMeasureFeature() {
   return {
     type: DRAWING.CLEAR_MEASURE_FEATURE,
+  };
+}
+
+/** Set the editing style.
+ *  @param {Object} mbStyle The mapbox style to be used for the edit feature mode.
+ *  @returns {Object} An action object to pass to the reducer.
+ */
+export function setEditStyle(mbStyle) {
+  return {
+    type: DRAWING.SET_EDIT_STYLE,
+    editStyle: mbStyle
+  };
+}
+
+/** Set the select style.
+ *  @param {Object} mbStyle The mapbox style to be used for the select feature mode.
+ *  @returns {Object} An action object to pass to the reducer.
+ */
+export function setSelectStyle(mbStyle) {
+  return {
+    type: DRAWING.SET_SELECT_STYLE,
+    selectStyle: mbStyle
+  };
+}
+
+/** Set the modify style.
+ *  @param {Object} mbStyle The mapbox style to be used for the modify feature mode.
+ *  @returns {Object} An action object to pass to the reducer.
+ */
+export function setModifyStyle(mbStyle) {
+  return {
+    type: DRAWING.SET_MODIFY_STYLE,
+    modifyStyle: mbStyle
+  };
+}
+
+/** Set the measure style.
+ *  @param {Object} mbStyle The mapbox style to be used for the measure mode.
+ *  @returns {Object} An action object to pass to the reducer.
+ */
+export function setMeasureStyle(mbStyle) {
+  return {
+    type: DRAWING.SET_MEASURE_STYLE,
+    measureStyle: mbStyle
   };
 }

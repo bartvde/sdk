@@ -9,11 +9,11 @@ import {createStore, combineReducers} from 'redux';
 import {mount, configure} from 'enzyme';
 import  Adapter from 'enzyme-adapter-react-16';
 
-import SdkMap from '../../src/components/map';
-import MapReducer from '../../src/reducers/map';
-import * as MapActions from '../../src/actions/map';
-import SdkSpriteStyle from '../../src/style/sprite';
-import Feature from 'ol/feature';
+import SdkMap from '@boundlessgeo/sdk/components/map';
+import MapReducer from '@boundlessgeo/sdk/reducers/map';
+import * as MapActions from '@boundlessgeo/sdk/actions/map';
+import SdkSpriteStyle from '@boundlessgeo/sdk/style/sprite';
+import Feature from 'ol/Feature';
 
 import canvas from 'canvas';
 
@@ -36,7 +36,7 @@ describe('tests for the sprite animation map layers', () => {
     map = wrapper.instance().getWrappedInstance();
   });
 
-  it('sets the correct style function', () => {
+  it('sets the correct style function', (done) => {
     // add source
     store.dispatch(MapActions.addSource('points', {
       type: 'geojson',
@@ -69,17 +69,20 @@ describe('tests for the sprite animation map layers', () => {
       source: 'points',
       type: 'symbol',
     }));
-    const olLayer = map.layers['points-helicopters'];
-    const styleFn = olLayer.getStyle();
-    const style = styleFn(new Feature());
-    expect(style.getImage()).toBeInstanceOf(SdkSpriteStyle);
-    spyOn(style.getImage(), 'update');
-    // postcompose should trigger update
-    map.map.dispatchEvent({type: 'postcompose'});
-    expect(style.getImage().update).toHaveBeenCalled();
+    window.setTimeout(() => {
+      const olLayer = map.layers['points-helicopters'];
+      const styleFn = olLayer.getStyle();
+      const style = styleFn(new Feature());
+      expect(style.getImage()).toBeInstanceOf(SdkSpriteStyle);
+      spyOn(style.getImage(), 'update');
+      // postcompose should trigger update
+      map.map.dispatchEvent({type: 'postcompose'});
+      expect(style.getImage().update).toHaveBeenCalled();
+      done();
+    }, 0);
   });
 
-  it('sets the correct style function and filter', () => {
+  it('sets the correct style function and filter', (done) => {
     // add source
     store.dispatch(MapActions.addSource('points', {
       type: 'geojson',
@@ -111,12 +114,15 @@ describe('tests for the sprite animation map layers', () => {
       source: 'points',
       type: 'symbol',
     }));
-    const olLayer = map.layers['points-helicopters'];
-    const styleFn = olLayer.getStyle();
-    let style = styleFn(new Feature({visible: 1}));
-    expect(style).toEqual(null);
-    style = styleFn(new Feature({visible: 0}));
-    expect(style.getImage()).toBeInstanceOf(SdkSpriteStyle);
+    window.setTimeout(() => {
+      const olLayer = map.layers['points-helicopters'];
+      const styleFn = olLayer.getStyle();
+      let style = styleFn(new Feature({visible: 1}));
+      expect(style).toEqual(null);
+      style = styleFn(new Feature({visible: 0}));
+      expect(style.getImage()).toBeInstanceOf(SdkSpriteStyle);
+      done();
+    }, 0);
   });
 
 });

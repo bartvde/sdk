@@ -24,63 +24,65 @@ import {connect} from 'react-redux';
 
 import {applyBackground, applyStyle} from 'ol-mapbox-style';
 
-import OlMap from 'ol/pluggablemap';
-import View from 'ol/view';
-import Overlay from 'ol/overlay';
-import MapRenderer from 'ol/renderer/canvas/map';
-import interaction from 'ol/interaction';
-import plugins from 'ol/plugins';
-import PluginType from 'ol/plugintype';
-import TileLayerRenderer from 'ol/renderer/canvas/tilelayer';
+import CanvasMap from 'ol/CanvasMap';
+import View from 'ol/View';
+import Overlay from 'ol/Overlay';
+import {defaults as interactionDefaults} from 'ol/interaction';
 
-import Observable from 'ol/observable';
+import PolygonGeom from 'ol/geom/Polygon';
+import MultiPolygonGeom from 'ol/geom/MultiPolygon';
 
-import Proj from 'ol/proj';
-import Coordinate from 'ol/coordinate';
-import Sphere from 'ol/sphere';
+import {unByKey} from 'ol/Observable';
 
-import TileLayer from 'ol/layer/tile';
-import XyzSource from 'ol/source/xyz';
-import TileWMSSource from 'ol/source/tilewms';
-import TileJSON from 'ol/source/tilejson';
-import TileGrid from 'ol/tilegrid';
+import {transform, transformExtent, toLonLat} from 'ol/proj';
+import {toStringHDMS} from 'ol/coordinate';
+import {getDistance, getArea} from 'ol/sphere';
 
-import VectorTileLayer from 'ol/layer/vectortile';
-import VectorTileSource from 'ol/source/vectortile';
+import TileLayer from 'ol/layer/Tile';
+import XyzSource from 'ol/source/XYZ';
+import TileWMSSource from 'ol/source/TileWMS';
+import TileJSON from 'ol/source/TileJSON';
+import {createXYZ} from 'ol/tilegrid';
 
-import MvtFormat from 'ol/format/mvt';
-import RenderFeature from 'ol/render/feature';
+import VectorTileLayer from 'ol/layer/VectorTile';
+import VectorTileSource from 'ol/source/VectorTile';
 
-import ImageLayer from 'ol/layer/image';
-import ImageStaticSource from 'ol/source/imagestatic';
+import MvtFormat from 'ol/format/MVT';
+import RenderFeature from 'ol/render/Feature';
 
-import VectorLayer from 'ol/layer/vector';
-import VectorSource from 'ol/source/vector';
+import ImageLayer from 'ol/layer/Image';
+import ImageStaticSource from 'ol/source/ImageStatic';
 
-import GeoJsonFormat from 'ol/format/geojson';
-import EsriJsonFormat from 'ol/format/esrijson';
+import VectorLayer from 'ol/layer/Vector';
+import VectorSource from 'ol/source/Vector';
 
-import DrawInteraction from 'ol/interaction/draw';
-import ModifyInteraction from 'ol/interaction/modify';
-import SelectInteraction from 'ol/interaction/select';
+import GeoJsonFormat from 'ol/format/GeoJSON';
+import EsriJsonFormat from 'ol/format/EsriJSON';
 
-import Style from 'ol/style/style';
+import DrawInteraction, {createBox} from 'ol/interaction/Draw';
+import ModifyInteraction from 'ol/interaction/Modify';
+import SelectInteraction from 'ol/interaction/Select';
+
+import mb2olstyle from 'ol-mapbox-style/stylefunction';
+
+import Style from 'ol/style/Style';
 import SpriteStyle from '../style/sprite';
 
-import AttributionControl from 'ol/control/attribution';
+import AttributionControl from 'ol/control/Attribution';
 
-import LoadingStrategy from 'ol/loadingstrategy';
+import {bbox as bboxStrategy, all as allStrategy} from 'ol/loadingstrategy';
 
 import {updateLayer, setView, setBearing} from '../actions/map';
-import {setMapSize, setMousePosition, setMapExtent, setResolution, setProjection} from '../actions/mapinfo';
-import {INTERACTIONS, LAYER_VERSION_KEY, SOURCE_VERSION_KEY, TIME_KEY, TIME_ATTRIBUTE_KEY, QUERYABLE_KEY, QUERY_ENDPOINT_KEY} from '../constants';
+import {setMapSize, setMousePosition, setMapExtent, setResolution, setProjection, setSourceError, clearSourceErrors} from '../actions/mapinfo';
+import {INTERACTIONS, LAYER_VERSION_KEY, SOURCE_VERSION_KEY, TIME_KEY, TIME_START_KEY, QUERYABLE_KEY, QUERY_ENDPOINT_KEY, QUERY_TYPE_KEY, QUERY_PARAMS_KEY, MIN_ZOOM_KEY, MAX_ZOOM_KEY, QUERY_TYPE_WFS, GEOMETRY_NAME_KEY} from '../constants';
 import {dataVersionKey} from '../reducers/map';
+import MapCommon, {MapRender} from './map-common';
 
-import {setMeasureFeature, clearMeasureFeature} from '../actions/drawing';
+import {finalizeMeasureFeature, setMeasureFeature, clearMeasureFeature} from '../actions/drawing';
 
 import ClusterSource from '../source/cluster';
 
-import {parseQueryString, jsonClone, jsonEquals, getLayerById, degreesToRadians, radiansToDegrees, getKey, encodeQueryObject} from '../util';
+import {parseQueryString, jsonClone, jsonEquals, getLayerById, degreesToRadians, radiansToDegrees, getKey, encodeQueryObject, isLayerVisible, optionalEquals} from '../util';
 
 import fetchJsonp from 'fetch-jsonp';
 
@@ -94,12 +96,9 @@ import 'ol/ol.css';
 
 const GEOJSON_FORMAT = new GeoJsonFormat();
 const ESRIJSON_FORMAT = new EsriJsonFormat();
-const WGS84_SPHERE = new Sphere(6378137);
 const MAPBOX_PROTOCOL = 'mapbox://';
+const MAPBOX_HOST = 'api.mapbox.com/v4';
 const BBOX_STRING = '{bbox-epsg-3857}';
-
-plugins.register(PluginType.MAP_RENDERER, MapRenderer);
-plugins.register(PluginType.LAYER_RENDERER, TileLayerRenderer);
 
 /** This variant of getVersion() differs as it allows
  *  for undefined values to be returned.
@@ -151,45 +150,77 @@ function configureTileSource(glSource, mapProjection, time) {
       url: urlParts[0],
       params,
     }, commonProps));
-  }
-  const source = new XyzSource(Object.assign({
-    urls: glSource.tiles,
-  }, commonProps));
-  source.setTileLoadFunction((tile, src) => {
-    // copy the src string.
-    let img_src = src.slice();
-    if (src.indexOf(BBOX_STRING) !== -1) {
-      const bbox = source.getTileGrid().getTileCoordExtent(tile.getTileCoord());
-      img_src = src.replace(BBOX_STRING, bbox.toString());
-    }
-    // disabled the linter below as this is how
-    //  OpenLayers documents this operation.
-    // eslint-disable-next-line
-    tile.getImage().src = img_src;
-  });
-  if (glSource.scheme === 'tms') {
-    source.setTileUrlFunction((tileCoord, pixelRatio, projection) => {
-      const min = 0;
-      const max = glSource.tiles.length - 1;
-      const idx = Math.floor(Math.random() * (max - min + 1)) + min;
-      const z = tileCoord[0];
-      const x = tileCoord[1];
-      const y = tileCoord[2] + (1 << z);
-      return glSource.tiles[idx].replace('{z}', z).replace('{y}', y).replace('{x}', x);
+  } else {
+    const source = new XyzSource(Object.assign({
+      urls: glSource.tiles,
+    }, commonProps));
+    source.setTileLoadFunction(function(tile, src) {
+      // copy the src string.
+      let img_src = src.slice();
+      if (src.indexOf(BBOX_STRING) !== -1) {
+        const bbox = source.getTileGrid().getTileCoordExtent(tile.getTileCoord());
+        img_src = src.replace(BBOX_STRING, bbox.toString());
+      }
+
+      // check to see if a cache invalidation has been requested.
+      const ck = source.get('_ck');
+      if (ck !== undefined) {
+        img_src = addParam(img_src, '_ck', ck);
+      }
+
+      // disabled the linter below as this is how
+      //  OpenLayers documents this operation.
+      // eslint-disable-next-line
+      tile.getImage().src = img_src;
     });
+    if (glSource.scheme === 'tms') {
+      source.setTileUrlFunction((tileCoord, pixelRatio, projection) => {
+        const min = 0;
+        const max = glSource.tiles.length - 1;
+        const idx = Math.floor(Math.random() * (max - min + 1)) + min;
+        const z = tileCoord[0];
+        const x = tileCoord[1];
+        const y = tileCoord[2] + (1 << z);
+
+        let url = glSource.tiles[idx].replace('{z}', z).replace('{y}', y).replace('{x}', x);
+
+        // add cache invalidation as requested.
+        const ck = source.get('_ck');
+        if (ck !== undefined) {
+          url = addParam(url, '_ck', ck);
+        }
+        return url;
+      });
+    }
+    return source;
   }
-  return source;
+}
+
+/** Gets the url for the TileJSON source.
+ * @param {Object} glSource The Mapbox GL map source containing a 'url' property.
+ * @param {string} accessToken The user's Mapbox tiles access token.
+ *
+ * @returns {string} The url to use (mapbox protocol substituted).
+ */
+export function getTileJSONUrl(glSource, accessToken) {
+  let url = glSource.url;
+  if (url.indexOf(MAPBOX_PROTOCOL) === 0) {
+    const mapid = url.replace(MAPBOX_PROTOCOL, '');
+    url = `https://${MAPBOX_HOST}/${mapid}.json?access_token=${accessToken}`;
+  }
+  return url;
 }
 
 /** Configures an OpenLayers TileJSONSource object from the provided
  * Mapbox GL style object.
  * @param {Object} glSource The Mapbox GL map source containing a 'url' property.
+ * @param {string} accessToken The user's Mapbox tiles access token.
  *
  * @returns {Object} Configured OpenLayers TileJSONSource.
  */
-function configureTileJSONSource(glSource) {
+function configureTileJSONSource(glSource, accessToken) {
   return new TileJSON({
-    url: glSource.url,
+    url: getTileJSONUrl(glSource, accessToken),
     crossOrigin: 'anonymous',
   });
 }
@@ -202,12 +233,11 @@ function configureTileJSONSource(glSource) {
  */
 function configureImageSource(glSource) {
   const coords = glSource.coordinates;
-  const source = new ImageStaticSource({
+  return new ImageStaticSource({
     url: glSource.url,
     imageExtent: [coords[0][0], coords[3][1], coords[1][0], coords[0][1]],
     projection: 'EPSG:4326',
   });
-  return source;
 }
 
 /** Configures an OpenLayers VectorTileSource object from the provided
@@ -218,44 +248,65 @@ function configureImageSource(glSource) {
  * @returns {Object} Configured OpenLayers VectorTileSource.
  */
 function configureMvtSource(glSource, accessToken) {
-  const url = glSource.url;
-  let urls;
-  if (url.indexOf(MAPBOX_PROTOCOL) === 0) {
-    const mapid = url.replace(MAPBOX_PROTOCOL, '');
-    const suffix = 'vector.pbf';
-    const hosts = ['a', 'b', 'c', 'd'];
-    urls = [];
-    for (let i = 0, ii = hosts.length; i < ii; ++i) {
-      const host = hosts[i];
-      urls.push(`https://${host}.tiles.mapbox.com/v4/${mapid}/{z}/{x}/{y}.${suffix}?access_token=${accessToken}`);
-    }
+  if (glSource.tiles) {
+    return new Promise((resolve, reject) => {
+      // predefine the source in-case since it's needed for the tile_url_fn
+      let source;
+      let tile_url_fn;
+      // check the first tile to see if we need to do BBOX subsitution
+      if (glSource.tiles[0].indexOf(BBOX_STRING) !== -1) {
+        tile_url_fn = function(urlTileCoord, pixelRatio, projection) {
+          const bbox = source.getTileGrid().getTileCoordExtent(urlTileCoord);
+          return glSource.tiles[0].replace(BBOX_STRING, bbox.toString());
+        };
+      }
+      source = new VectorTileSource({
+        urls: glSource.tiles,
+        tileGrid: createXYZ({
+          tileSize: 512,
+          maxZoom: 'maxzoom' in glSource ? glSource.maxzoom : 22,
+          minZoom: glSource.minzoom,
+        }),
+        attributions: glSource.attribution,
+        format: new MvtFormat(),
+        crossOrigin: 'crossOrigin' in glSource ? glSource.crossOrigin : 'anonymous',
+        tileUrlFunction: tile_url_fn,
+      });
+      resolve(source);
+    });
   } else {
-    urls = [url];
+    let url = getTileJSONUrl(glSource, accessToken);
+    return fetch(url).then((response) => {
+      if (response.ok) {
+        return response.json();
+      }
+    })
+      .then((json) => {
+        return new VectorTileSource({
+          crossOrigin: 'crossOrigin' in glSource ? glSource.crossOrigin : 'anonymous',
+          attributions: json.attribution,
+          format: new MvtFormat(),
+          tileGrid: createXYZ({
+            minZoom: json.minzoom,
+            maxZoom: json.maxzoom,
+            tileSize: 512
+          }),
+          urls: json.tiles,
+        });
+      });
   }
+}
 
-  // predefine the source in-case it is needed
-  //  for the tile_url_fn
-  let source;
-
-  // check to see if the url uses bounding box or Z,X,Y
-  let tile_url_fn;
-  if (url.indexOf(BBOX_STRING) !== -1) {
-    tile_url_fn = function(urlTileCoord, pixelRatio, projection) {
-      const bbox = source.getTileGrid().getTileCoordExtent(urlTileCoord);
-      return url.replace(BBOX_STRING, bbox.toString());
-    };
+function addParam(url, paramName, paramValue) {
+  let new_url = '' + url;
+  if (new_url.indexOf('?') >= 0) {
+    new_url += '&';
+  } else {
+    new_url += '?';
   }
+  new_url += paramName + '=' + paramValue;
 
-  source = new VectorTileSource({
-    urls,
-    tileGrid: TileGrid.createXYZ({maxZoom: 22}),
-    tilePixelRatio: 16,
-    format: new MvtFormat(),
-    crossOrigin: 'crossOrigin' in glSource ? glSource.crossOrigin : 'anonymous',
-    tileUrlFunction: tile_url_fn,
-  });
-
-  return source;
+  return new_url;
 }
 
 function getLoaderFunction(glSource, mapProjection, baseUrl) {
@@ -281,6 +332,12 @@ function getLoaderFunction(glSource, mapProjection, baseUrl) {
       if (url.indexOf(BBOX_STRING) >= 0) {
         url = url.replace(BBOX_STRING, bbox.toString());
       }
+
+      // check to see if a cache invalidation has been requested.
+      const ck = this.get('_ck');
+      if (ck !== undefined) {
+        url = addParam(url, '_ck', ck);
+      }
       features_promise = fetch(url).then(response => response.json());
     } else if (typeof glSource.data === 'object'
       && (glSource.data.type === 'Feature' || glSource.data.type === 'FeatureCollection')) {
@@ -305,6 +362,8 @@ function getLoaderFunction(glSource, mapProjection, baseUrl) {
           this.addFeatures(GEOJSON_FORMAT.readFeatures(features, readFeatureOpt));
         }
       }).catch((error) => {
+        // use the event name tileloaderror for consistency.
+        this.dispatchEvent('tileloaderror');
         console.error(error);
       });
     }
@@ -341,7 +400,7 @@ function updateGeojsonSource(olSource, glSource, mapView, baseUrl) {
 function configureGeojsonSource(glSource, mapView, baseUrl, wrapX) {
   const use_bbox = (typeof glSource.data === 'string' && glSource.data.indexOf(BBOX_STRING) >= 0);
   const vector_src = new VectorSource({
-    strategy: use_bbox ? LoadingStrategy.bbox : LoadingStrategy.all,
+    strategy: use_bbox ? bboxStrategy : allStrategy,
     loader: getLoaderFunction(glSource, mapView.getProjection(), baseUrl),
     useSpatialIndex: true,
     wrapX: wrapX,
@@ -378,21 +437,24 @@ function configureGeojsonSource(glSource, mapView, baseUrl, wrapX) {
  * @returns {(Object|null)} Callback to the applicable configure source method.
  */
 function configureSource(glSource, mapView, accessToken, baseUrl, time, wrapX) {
+  let src;
   // tiled raster layer.
   if (glSource.type === 'raster') {
     if ('tiles' in glSource) {
-      return configureTileSource(glSource, mapView.getProjection(), time);
+      src = configureTileSource(glSource, mapView.getProjection(), time);
     } else if (glSource.url) {
-      return configureTileJSONSource(glSource);
+      src = configureTileJSONSource(glSource, accessToken);
     }
   } else if (glSource.type === 'geojson') {
-    return configureGeojsonSource(glSource, mapView, baseUrl, wrapX);
+    src = configureGeojsonSource(glSource, mapView, baseUrl, wrapX);
   } else if (glSource.type === 'image') {
-    return configureImageSource(glSource);
+    src = configureImageSource(glSource);
   } else if (glSource.type === 'vector') {
     return configureMvtSource(glSource, accessToken);
   }
-  return null;
+  return new Promise((resolve, reject) => {
+    resolve(src);
+  });
 }
 
 /** Create a unique key for a group of layers
@@ -501,6 +563,8 @@ export class Map extends React.Component {
     // interactions are how the user can manipulate the map,
     //  this tracks any active interaction.
     this.activeInteractions = null;
+
+    this.render = MapRender.bind(this);
   }
 
   componentDidMount() {
@@ -514,22 +578,27 @@ export class Map extends React.Component {
     }
   }
 
-  /** This will check nextProps and nextState to see
-   *  what needs to be updated on the map.
+  shouldComponentUpdate() {
+    // This should always return false to keep
+    // render() from being called.
+    return false;
+  }
+
+  /** This will check nextProps to see what needs to be updated on the map.
    * @param {Object} nextProps The next properties of this component.
-   *
-   * @returns {boolean} should the component re-render?
    */
-  shouldComponentUpdate(nextProps) {
+  componentWillReceiveProps(nextProps) {
     const old_time = getKey(this.props.map.metadata, TIME_KEY);
 
     const new_time = getKey(nextProps.map.metadata, TIME_KEY);
+
+    const force_redraw = !optionalEquals(this.props, nextProps, 'mapinfo', 'requestedRedraws');
 
     if (old_time !== new_time) {
       // find time dependent layers
       for (let i = 0, ii = nextProps.map.layers.length; i < ii; ++i) {
         const layer = nextProps.map.layers[i];
-        if (layer.metadata[TIME_ATTRIBUTE_KEY] !== undefined) {
+        if (layer.metadata[TIME_START_KEY] !== undefined) {
           this.props.updateLayer(layer.id, {
             filter: this.props.createLayerFilter(layer, nextProps.map.metadata[TIME_KEY])
           });
@@ -543,6 +612,23 @@ export class Map extends React.Component {
         }
       }
     }
+
+    // Force WMS-type layers to refresh.
+    if (force_redraw) {
+      const timestamp = (new Date()).getTime();
+      for (const key in this.sources) {
+        const src = this.sources[key];
+        if (typeof src.updateParams === 'function') {
+          src.updateParams({'_CK': timestamp});
+        } else {
+          // set the time stamp for other loaders which
+          //  check for the _ck attribute.
+          src.set('_ck', timestamp);
+          src.refresh();
+        }
+      }
+    }
+
     const map_view = this.map.getView();
     const map_proj = map_view.getProjection();
 
@@ -553,7 +639,7 @@ export class Map extends React.Component {
         (nextProps.map.center[0] !== this.props.map.center[0]
         || nextProps.map.center[1] !== this.props.map.center[1])) {
         // convert the center point to map coordinates.
-        const center = Proj.transform(nextProps.map.center, 'EPSG:4326', map_proj);
+        const center = transform(nextProps.map.center, 'EPSG:4326', map_proj);
         map_view.setCenter(center);
       }
     }
@@ -569,41 +655,60 @@ export class Map extends React.Component {
 
     // check the sources diff
     const next_sources_version = getVersion(nextProps.map, SOURCE_VERSION_KEY);
-    if (this.sourcesVersion !== next_sources_version) {
-      // go through and update the sources.
-      this.configureSources(nextProps.map.sources, next_sources_version);
-    }
     const next_layer_version = getVersion(nextProps.map, LAYER_VERSION_KEY);
-    if (this.layersVersion !== next_layer_version) {
-      // go through and update the layers.
-      this.configureLayers(nextProps.map.sources, nextProps.map.layers, next_layer_version, nextProps.map.sprite);
+
+    // default to the source-configuration promise to being resolved.
+    let sources_promise = new Promise((resolve, reject) => {
+      resolve(true);
+    });
+
+    if (this.sourcesVersion !== next_sources_version || force_redraw) {
+      sources_promise = this.configureSources(nextProps.map.sources, next_sources_version)
+        .then(() => {
+          this.configureLayers(nextProps.map.sources, nextProps.map.layers, next_layer_version, nextProps.map.sprite, this.props.declutter);
+        }).catch((error) => {
+          console.error('An error occured.', error);
+        });
+    } else if (this.layersVersion !== next_layer_version) {
+      this.configureLayers(nextProps.map.sources, nextProps.map.layers, next_layer_version, nextProps.map.sprite, this.props.declutter);
     }
 
-    // check the vector sources for data changes
-    const src_names = Object.keys(nextProps.map.sources);
-    for (let i = 0, ii = src_names.length; i < ii; i++) {
-      const src_name = src_names[i];
-      const src = this.props.map.sources[src_name];
-      if (src && src.type === 'geojson') {
-        const version_key = dataVersionKey(src_name);
+    // wait for the sources to be ready.
+    sources_promise
+      .then(() => {
+        // check the vector sources for data changes
+        const src_names = Object.keys(nextProps.map.sources);
+        for (let i = 0, ii = src_names.length; i < ii; i++) {
+          const src_name = src_names[i];
+          const src = this.props.map.sources[src_name];
+          if (src && src.type === 'geojson') {
+            const version_key = dataVersionKey(src_name);
 
 
-        if (this.props.map.metadata !== undefined &&
-            this.props.map.metadata[version_key] !== nextProps.map.metadata[version_key]) {
-          const next_src = nextProps.map.sources[src_name];
-          updateGeojsonSource(this.sources[src_name], next_src, map_view, this.props.mapbox.baseUrl);
+            if (force_redraw || (this.props.map.metadata !== undefined &&
+                this.props.map.metadata[version_key] !== nextProps.map.metadata[version_key])) {
+              const next_src = nextProps.map.sources[src_name];
+              updateGeojsonSource(this.sources[src_name], next_src, map_view, this.props.mapbox.baseUrl);
+            }
+          }
         }
-      }
-    }
+      })
+      .catch((error) => {
+        console.error('An error occured.', error);
+      });
 
     // do a quick sweep to remove any popups
     //  that have been closed.
     this.updatePopups();
 
     // change the current interaction as needed
-    if (nextProps.drawing && (nextProps.drawing.interaction !== this.props.drawing.interaction
-        || nextProps.drawing.sourceName !== this.props.drawing.sourceName)) {
-      this.updateInteraction(nextProps.drawing);
+    if (nextProps.drawing) {
+      if (nextProps.drawing.interaction !== this.props.drawing.interaction || nextProps.drawing.sourceName !== this.props.drawing.sourceName) {
+        this.updateInteraction(nextProps.drawing);
+      }
+      if (nextProps.drawing.measureFinishGeometry) {
+        this.finishMeasureGeometry();
+      }
     }
 
     if (nextProps.print && nextProps.print.exportImage) {
@@ -614,38 +719,36 @@ export class Map extends React.Component {
       this.map.renderSync();
     }
 
-    // This should always return false to keep
-    // render() from being called.
-    return false;
+    if (force_redraw || !optionalEquals(this.props, nextProps, 'mapinfo', 'size')) {
+      this.map.updateSize();
+    }
   }
 
   /** Callback for finished drawings, converts the event's feature
    *  to GeoJSON and then passes the relevant information on to
    *  this.props.onFeatureDrawn, this.props.onFeatureModified,
-   *  or this.props.onFeatureSelected.
+   *  or this.props.onFeatureSelected, this.props.onFeatureDeselected.
    *
-   *  @param {string} eventType One of 'drawn', 'modified', or 'selected'.
+   *  @param {string} eventType One of 'drawn', 'modified', 'selected' or 'deselected'.
    *  @param {string} sourceName Name of the geojson source.
-   *  @param {Object} feature OpenLayers feature object.
+   *  @param {Object[]} features OpenLayers feature objects.
    *
    */
-  onFeatureEvent(eventType, sourceName, feature) {
-    if (feature !== undefined) {
-      // convert the feature to GeoJson
-      const proposed_geojson = GEOJSON_FORMAT.writeFeatureObject(feature, {
-        dataProjection: 'EPSG:4326',
-        featureProjection: this.map.getView().getProjection(),
-      });
-
-      // Pass on feature drawn this map object, the target source,
-      //  and the drawn feature.
-      if (eventType === 'drawn') {
-        this.props.onFeatureDrawn(this, sourceName, proposed_geojson);
-      } else if (eventType === 'modified') {
-        this.props.onFeatureModified(this, sourceName, proposed_geojson);
-      } else if (eventType === 'selected') {
-        this.props.onFeatureSelected(this, sourceName, proposed_geojson);
-      }
+  onFeatureEvent(eventType, sourceName, features) {
+    // convert the features to GeoJson
+    const proposed_geojson = GEOJSON_FORMAT.writeFeaturesObject(features, {
+      dataProjection: 'EPSG:4326',
+      featureProjection: this.map.getView().getProjection(),
+    });
+    // Pass on this map object, the target source and the features.
+    if (eventType === 'drawn') {
+      this.props.onFeatureDrawn(this, sourceName, proposed_geojson);
+    } else if (eventType === 'modified') {
+      this.props.onFeatureModified(this, sourceName, proposed_geojson);
+    } else if (eventType === 'selected') {
+      this.props.onFeatureSelected(this, sourceName, proposed_geojson);
+    } else if (eventType === 'deselected') {
+      this.props.onFeatureDeselected(this, sourceName, proposed_geojson);
     }
   }
 
@@ -654,28 +757,60 @@ export class Map extends React.Component {
    *  OpenLayers source definitions.
    *  @param {Object} sourcesDef All sources defined in the Mapbox GL stylesheet.
    *  @param {number} sourceVersion Counter for the source metadata updates.
+   *
+   *  @returns {Promise} When all sources are done, the promise is resolved.
    */
   configureSources(sourcesDef, sourceVersion) {
-    this.sourcesVersion = sourceVersion;
+    const promises = [];
     // TODO: Update this to check "diff" configurations
     //       of sources.  Currently, this will only detect
     //       additions and removals.
     let src_names = Object.keys(sourcesDef);
     const map_view = this.map.getView();
+
+    const listenForError = (src_name, source) => {
+      source.on('tileloaderror', () => {
+        this.props.setSourceError(src_name);
+      });
+    };
+
+    const addSource = function(src_name, source) {
+      if (source) {
+        this.sources[src_name] = source;
+        listenForError(src_name, source);
+      }
+    };
+    const addAndUpdateSource = function(src_name, source) {
+      if (source) {
+        this.sources[src_name] = source;
+        this.updateLayerSource(src_name);
+        listenForError(src_name, source);
+      }
+    };
+
+
     for (let i = 0, ii = src_names.length; i < ii; i++) {
       const src_name = src_names[i];
       // Add the source because it's not in the current
       //  list of sources.
       if (!(src_name in this.sources)) {
         const time = getKey(this.props.map.metadata, TIME_KEY);
-        this.sources[src_name] = configureSource(sourcesDef[src_name], map_view,
-          this.props.mapbox.accessToken, this.props.mapbox.baseUrl, time, this.props.wrapX);
+        promises.push(configureSource(sourcesDef[src_name], map_view,
+          this.props.mapbox.accessToken, this.props.mapbox.baseUrl, time, this.props.wrapX)
+          .then(addSource.bind(this, src_name)));
       }
       const src = this.props.map.sources[src_name];
       if (src && src.type !== 'geojson' && !jsonEquals(src, sourcesDef[src_name])) {
         // reconfigure source and tell layers about it
-        this.sources[src_name] = configureSource(sourcesDef[src_name], map_view);
-        this.updateLayerSource(src_name);
+        promises.push(configureSource(
+          sourcesDef[src_name],
+          map_view,
+          this.props.mapbox.accessToken,
+          this.props.mapbox.baseUrl,
+          undefined,
+          this.props.wrapX
+        )
+          .then(addAndUpdateSource.bind(this, src_name)));
       }
 
       // Check to see if there was a clustering change.
@@ -685,9 +820,14 @@ export class Map extends React.Component {
       if (src && (src.cluster !== sourcesDef[src_name].cluster
           || src.clusterRadius !== sourcesDef[src_name].clusterRadius)) {
         // reconfigure the source for clustering.
-        this.sources[src_name] = configureSource(sourcesDef[src_name], map_view);
-        // tell all the layers about it.
-        this.updateLayerSource(src_name);
+        promises.push(configureSource(
+          sourcesDef[src_name],
+          map_view,
+          this.props.mapbox.accessToken,
+          this.props.mapbox.baseUrl,
+          undefined,
+          this.props.wrapX
+        ).then(addAndUpdateSource.bind(this, src_name)));
       }
     }
 
@@ -700,6 +840,9 @@ export class Map extends React.Component {
         delete this.sources[src_name];
       }
     }
+    return Promise.all(promises).then(() => {
+      this.sourcesVersion = sourceVersion;
+    });
   }
 
   /** Applies the sprite animation information to the layer
@@ -771,7 +914,7 @@ export class Map extends React.Component {
       if (layer.metadata && layer.metadata['bnd:animate-sprite']) {
         spriteLayers.push(layer);
       }
-      const is_visible = layer.layout ? layer.layout.visibility !== 'none' : true;
+      const is_visible = isLayerVisible(layer);
       if (is_visible) {
         render_layers.push(layer);
       }
@@ -790,6 +933,12 @@ export class Map extends React.Component {
       applyStyle(olLayer, fake_style, layers[0].source);
     }
 
+    if (layers.length === 1 && layers[0].type === 'raster') {
+      if (layers[0].paint && layers[0].paint['raster-opacity']) {
+        olLayer.setOpacity(layers[0].paint['raster-opacity']);
+      }
+    }
+
     // handle toggling the layer on or off
     olLayer.setVisible(render_layers.length > 0);
   }
@@ -799,29 +948,39 @@ export class Map extends React.Component {
    *  @param {Object} glSource Mapbox GL source object.
    *  @param {Object[]} layers Array of Mapbox GL layer objects.
    *  @param {string} sprite The sprite of the map.
+   *  @param {boolean} declutter Should we declutter labels and symbols?
+   *  @param {number} idx The index in the layer stack.
    *
    *  @returns {(Object|null)} Configured OpenLayers layer object, or null.
    */
-  configureLayer(sourceName, glSource, layers, sprite) {
+  configureLayer(sourceName, glSource, layers, sprite, declutter, idx) {
     const source = this.sources[sourceName];
     let layer = null;
     switch (glSource.type) {
       case 'raster':
         layer = new TileLayer({
           source,
+          opacity: layers[0].paint ? layers[0].paint['raster-opacity'] : undefined,
         });
         this.applyStyle(layer, layers, sprite);
         return layer;
       case 'geojson':
         layer = new VectorLayer({
-          declutter: true,
+          declutter: declutter,
           source,
         });
         this.applyStyle(layer, layers, sprite);
         return layer;
       case 'vector':
+        const time = getKey(this.props.map.metadata, TIME_KEY);
+        if (time && layers[0].metadata && layers[0].metadata[TIME_START_KEY] !== undefined) {
+          layers[0].filter = this.props.createLayerFilter(layers[0], time);
+        }
+        const tileGrid = source.getTileGrid();
         layer = new VectorTileLayer({
-          declutter: true,
+          maxResolution: tileGrid.getMinZoom() > 0 ? tileGrid.getResolution(tileGrid.getMinZoom()) : undefined,
+          declutter: declutter,
+          zIndex: idx,
           source,
         });
         this.applyStyle(layer, layers, sprite);
@@ -882,11 +1041,11 @@ export class Map extends React.Component {
    *  @param {Object[]} layersDef The array of layers in map.state.
    *  @param {number} layerVersion The value of state.map.metadata[LAYER_VERSION_KEY].
    *  @param {string} sprite The sprite of the map.
+   *  @param {boolean} declutter Should we declutter labels and symbols?
    */
-  configureLayers(sourcesDef, layersDef, layerVersion, sprite) {
+  configureLayers(sourcesDef, layersDef, layerVersion, sprite, declutter) {
     // update the internal version counter.
     this.layersVersion = layerVersion;
-
     // bin layers into groups based on their source.
     const layer_groups = [];
 
@@ -933,7 +1092,7 @@ export class Map extends React.Component {
           applyBackground(this.map, {layers: lyr_group});
         } else {
           const hydrated_group = hydrateLayerGroup(layersDef, lyr_group);
-          const new_layer = this.configureLayer(source_name, source, hydrated_group, sprite);
+          const new_layer = this.configureLayer(source_name, source, hydrated_group, sprite, declutter, i);
 
           // if the new layer has been defined, add it to the map.
           if (new_layer !== null) {
@@ -1055,7 +1214,7 @@ export class Map extends React.Component {
     // reset the position after the popup has been added to the map.
     // assumes the popups coordinate is 4326
     const wgs84 = [popup.props.coordinate[0], popup.props.coordinate[1]];
-    const xy = Proj.transform(wgs84, 'EPSG:4326', this.map.getView().getProjection());
+    const xy = transform(wgs84, 'EPSG:4326', this.map.getView().getProjection());
     overlay.setPosition(xy);
 
     // do not trigger an update if silent is
@@ -1077,7 +1236,7 @@ export class Map extends React.Component {
     const view = map.getView();
     const map_prj = view.getProjection();
     let url, features_by_layer, layer_name;
-    if (layer.metadata[QUERYABLE_KEY] && (!layer.layout || (layer.layout.visibility && layer.layout.visibility !== 'none'))) {
+    if (layer.metadata[QUERYABLE_KEY] && isLayerVisible(layer)) {
       const map_resolution = view.getResolution();
       const source = this.sources[layer.source];
       if (source instanceof TileWMSSource) {
@@ -1101,44 +1260,112 @@ export class Map extends React.Component {
                 },
               ).features;
               resolve(features_by_layer);
+            }).catch((error) => {
+              console.error('An error occured.', error);
             });
         }));
       } else if (layer.metadata[QUERY_ENDPOINT_KEY]) {
+        features_by_layer = {};
         const map_size = map.getSize();
-        promises.push(new Promise((resolve) => {
-          features_by_layer = {};
-          const params = {
-            geometryType: 'esriGeometryPoint',
-            geometry: evt.coordinate.join(','),
-            sr: map_prj.getCode().split(':')[1],
-            tolerance: 2,
-            mapExtent: view.calculateExtent(map_size).join(','),
-            imageDisplay: map_size.join(',') + ',90',
-            f: 'json',
-            pretty: 'false'
-          };
-          url = `${layer.metadata[QUERY_ENDPOINT_KEY]}?${encodeQueryObject(params)}`;
-          fetchJsonp(url).then(
-            response => response.json(),
-          ).then((json) => {
-            layer_name = layer.id;
-            const features = [];
-            for (let i = 0, ii = json.results.length; i < ii; ++i) {
-              features.push(ESRIJSON_FORMAT.readFeature(json.results[i]));
-            }
-            features_by_layer[layer_name] = GEOJSON_FORMAT.writeFeaturesObject(
-              features, {
-                featureProjection: map_prj,
-                dataProjection: 'EPSG:4326',
-              },
-            ).features;
-            resolve(features_by_layer);
-          }).catch(function(error) {
-            console.error('An error occured.', error);
-          });
-        }));
+        const map_extent = view.calculateExtent(map_size);
+        if (layer.metadata[QUERY_TYPE_KEY] === QUERY_TYPE_WFS) {
+          const geomName = layer.metadata[GEOMETRY_NAME_KEY];
+          promises.push(new Promise((resolve) => {
+            const tolerance = ((map_extent[3] - map_extent[1]) / map_size[1]) * this.props.tolerance;
+            const coord = evt.coordinate;
+            const bbox = [coord[0] - tolerance, coord[1] - tolerance, coord[0] + tolerance, coord[1] + tolerance];
+            const params = Object.assign({}, {
+              request: 'GetFeature',
+              version: '1.0.0',
+              typename: layer.source,
+              outputformat: 'JSON',
+              srsName: 'EPSG:4326',
+              'cql_filter': `BBOX(${geomName},${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]},'${this.props.projection}')`,
+            }, layer.metadata[QUERY_PARAMS_KEY]);
+            const url = `${layer.metadata[QUERY_ENDPOINT_KEY]}?${encodeQueryObject(params)}`;
+            fetch(url).then(
+              response => response.json(),
+              error => console.error('An error occured.', error),
+            )
+              .then((json) => {
+                const features = GEOJSON_FORMAT.readFeatures(json);
+                const intersection = [];
+                for (let i = 0, ii = features.length; i < ii; ++i) {
+                  const feature = features[i];
+                  const geom = feature.getGeometry();
+                  if (geom instanceof PolygonGeom || geom instanceof MultiPolygonGeom) {
+                    if (geom.intersectsCoordinate(toLonLat(coord))) {
+                      intersection.push(feature);
+                    }
+                  } else {
+                    intersection.push(feature);
+                  }
+                }
+                features_by_layer[layer.source] = GEOJSON_FORMAT.writeFeaturesObject(
+                  intersection, {
+                    featureProjection: GEOJSON_FORMAT.readProjection(json),
+                    dataProjection: 'EPSG:4326',
+                  },
+                ).features;
+                resolve(features_by_layer);
+              }).catch((error) => {
+                console.error('An error occured.', error);
+              });
+          }));
+        } else {
+          promises.push(new Promise((resolve) => {
+            const params = {
+              geometryType: 'esriGeometryPoint',
+              geometry: evt.coordinate.join(','),
+              sr: map_prj.getCode().split(':')[1],
+              tolerance: 2,
+              mapExtent: map_extent.join(','),
+              imageDisplay: map_size.join(',') + ',90',
+              f: 'json',
+              pretty: 'false'
+            };
+            url = `${layer.metadata[QUERY_ENDPOINT_KEY]}?${encodeQueryObject(params)}`;
+            fetchJsonp(url).then(
+              response => response.json(),
+            ).then((json) => {
+              layer_name = layer.id;
+              const features = [];
+              for (let i = 0, ii = json.results.length; i < ii; ++i) {
+                features.push(ESRIJSON_FORMAT.readFeature(json.results[i]));
+              }
+              features_by_layer[layer_name] = GEOJSON_FORMAT.writeFeaturesObject(
+                features, {
+                  featureProjection: map_prj,
+                  dataProjection: 'EPSG:4326',
+                },
+              ).features;
+              resolve(features_by_layer);
+            }).catch(function(error) {
+              console.error('An error occured.', error);
+            });
+          }));
+        }
       }
     }
+  }
+
+  /** Should we skip the layer for local query (forEachFeatureAtPixel)?
+   *
+   *  @param {Object} olLayer The openlayers layer object.
+   *
+   *  @returns {boolean} True if layer should be skipped in the local query.
+   */
+  shouldSkipForQuery(olLayer) {
+    const mapboxLayers = olLayer.get('mapbox-layers');
+    if (mapboxLayers) {
+      for (let i = 0, ii = mapboxLayers.length; i < ii; ++i) {
+        const layer = getLayerById(this.props.map.layers, mapboxLayers[i]);
+        if (layer && layer.metadata && (layer.metadata[QUERYABLE_KEY] === false || layer.metadata[QUERY_TYPE_KEY] === QUERY_TYPE_WFS)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /** Query the map and the appropriate layers.
@@ -1150,7 +1377,6 @@ export class Map extends React.Component {
   queryMap(evt) {
     // get the map projection
     const map_prj = this.map.getView().getProjection();
-
     // this is the standard "get features when clicking"
     //  business.
     const features_promise = new Promise((resolve) => {
@@ -1178,8 +1404,9 @@ export class Map extends React.Component {
             dataProjection: 'EPSG:4326',
           }));
         }
-      });
-
+      }, {layerFilter: (candidate) => {
+        return !this.shouldSkipForQuery(candidate);
+      }});
       resolve(features_by_layer);
     });
 
@@ -1208,29 +1435,37 @@ export class Map extends React.Component {
     // reproject the initial center based on that projection.
     let center;
     if (this.props.map.center !== undefined) {
-      center = Proj.transform(this.props.map.center, 'EPSG:4326', map_proj);
+      center = transform(this.props.map.center, 'EPSG:4326', map_proj);
     }
 
     // initialize the map.
-    this.map = new OlMap({
-      interactions: interaction.defaults(),
+    const minZoom = getKey(this.props.map.metadata, MIN_ZOOM_KEY);
+    const maxZoom = getKey(this.props.map.metadata, MAX_ZOOM_KEY);
+    this.map = new CanvasMap({
+      interactions: interactionDefaults(),
       controls: [new AttributionControl()],
       target: this.mapdiv,
       logo: false,
       view: new View({
+        minZoom: minZoom ? minZoom + 1 : undefined,
+        maxZoom: maxZoom ? maxZoom + 1 : undefined,
         center,
         zoom: this.props.map.zoom >= 0 ? this.props.map.zoom + 1 : this.props.map.zoom,
         rotation: rotation !== undefined ? -rotation : 0,
         projection: map_proj,
       }),
     });
-
     if (this.props.hover) {
       this.map.on('pointermove', (evt) => {
-        const lngLat = Proj.toLonLat(evt.coordinate);
+        const lngLat = toLonLat(evt.coordinate);
         this.props.setMousePosition({lng: lngLat[0], lat: lngLat[1]}, evt.coordinate);
       });
     }
+
+    // when the map starts, reset all the errors.
+    this.map.on('movestart', () => {
+      this.props.clearSourceErrors();
+    });
 
     // when the map moves update the location in the state
     this.map.on('moveend', () => {
@@ -1247,6 +1482,9 @@ export class Map extends React.Component {
 
     // when the map is clicked, handle the event.
     this.map.on('singleclick', (evt) => {
+      if (this.activeInteractions !== null) {
+        return;
+      }
       // React listens to events on the document, OpenLayers places their
       // event listeners on the element themselves. The only element
       // the map should care to listen to is the actual rendered map
@@ -1266,12 +1504,12 @@ export class Map extends React.Component {
         }
 
         // ensure the coordinate is also in 4326
-        const pt = Proj.transform(evt.coordinate, map_prj, 'EPSG:4326');
+        const pt = transform(evt.coordinate, map_prj, 'EPSG:4326');
         const coordinate = {
           0: pt[0],
           1: pt[1],
           xy: evt.coordinate,
-          hms: Coordinate.toStringHDMS(pt),
+          hms: toStringHDMS(pt),
         };
 
         // send the clicked-on coordinate and the list of features
@@ -1281,9 +1519,15 @@ export class Map extends React.Component {
 
 
     // bootstrap the map with the current configuration.
-    this.configureSources(this.props.map.sources, this.props.map.metadata[SOURCE_VERSION_KEY]);
-    this.configureLayers(this.props.map.sources, this.props.map.layers,
-      this.props.map.metadata[LAYER_VERSION_KEY]);
+    if (this.props.map.layers.length > 0) {
+      this.configureSources(this.props.map.sources, this.props.map.metadata[SOURCE_VERSION_KEY])
+        .then(() => {
+          this.configureLayers(this.props.map.sources, this.props.map.layers,
+            this.props.map.metadata[LAYER_VERSION_KEY], this.props.map.sprite, this.props.declutter);
+        }).catch((error) => {
+          console.error('An error occured.', error);
+        });
+    }
 
     // this is done after the map composes itself for the first time.
     //  otherwise the map was not always ready for the initial popups.
@@ -1318,39 +1562,49 @@ export class Map extends React.Component {
     }
 
     if (drawingProps.interaction === INTERACTIONS.modify) {
-      const select = new SelectInteraction({
+      let drawObj = {
         wrapX: false,
-      });
-
-      const modify = new ModifyInteraction({
+      };
+      drawObj = this.setStyleFunc(drawObj, drawingProps.modifyStyle);
+      const select = new SelectInteraction(drawObj);
+      let modifyObj = {
         features: select.getFeatures(),
-      });
+      };
+      modifyObj = this.setStyleFunc(modifyObj, drawingProps.modifyStyle);
+
+      const modify = new ModifyInteraction(modifyObj);
 
       modify.on('modifyend', (evt) => {
-        this.onFeatureEvent('modified', drawingProps.sourceName, evt.features.item(0));
+        this.onFeatureEvent('modified', drawingProps.sourceName, [evt.features.item(0)]);
       });
 
       this.activeInteractions = [select, modify];
     } else if (drawingProps.interaction === INTERACTIONS.select) {
       // TODO: Select is typically a single-feature affair but there
       //       should be support for multiple feature selections in the future.
-      const select = new SelectInteraction({
+      let drawObj = {
         wrapX: false,
         layers: (layer) => {
           const layer_src = this.sources[drawingProps.sourceName];
           return (layer.getSource() === layer_src);
         },
-      });
+      };
+      drawObj = this.setStyleFunc(drawObj, drawingProps.selectStyle);
+      const select = new SelectInteraction(drawObj);
 
-      select.on('select', () => {
-        this.onFeatureEvent('selected', drawingProps.sourcename, select.getFeatures().item(0));
+      select.on('select', (evt) => {
+        if (evt.selected.length > 0) {
+          this.onFeatureEvent('selected', drawingProps.sourcename, evt.selected);
+        } else if (evt.deselected.length > 0) {
+          this.onFeatureEvent('deselected', drawingProps.sourcename, evt.deselected);
+        }
       });
 
       this.activeInteractions = [select];
     } else if (INTERACTIONS.drawing.includes(drawingProps.interaction)) {
       let drawObj = {};
       if (drawingProps.interaction === INTERACTIONS.box) {
-        const geometryFunction = DrawInteraction.createBox();
+        const geometryFunction = createBox();
         drawObj = {
           type: 'Circle',
           geometryFunction
@@ -1358,10 +1612,11 @@ export class Map extends React.Component {
       } else {
         drawObj = {type: drawingProps.interaction};
       }
-      const draw = new DrawInteraction(drawObj);
+      const styleDrawObj = this.setStyleFunc(drawObj, drawingProps.editStyle);
+      const draw = new DrawInteraction(styleDrawObj);
 
       draw.on('drawend', (evt) => {
-        this.onFeatureEvent('drawn', drawingProps.sourceName, evt.feature);
+        this.onFeatureEvent('drawn', drawingProps.sourceName, [evt.feature]);
       });
 
       this.activeInteractions = [draw];
@@ -1369,11 +1624,14 @@ export class Map extends React.Component {
       // clear the previous measure feature.
       this.props.clearMeasureFeature();
 
-      const measure = new DrawInteraction({
+      const measureObj = {
         // The measure interactions are the same as the drawing interactions
         // but are prefixed with "measure:"
         type: drawingProps.interaction.split(':')[1],
-      });
+      };
+      const styleMeasureObj = this.setStyleFunc(measureObj, drawingProps.measureStyle);
+
+      const measure = new DrawInteraction(styleMeasureObj);
 
       let measure_listener = null;
       measure.on('drawstart', (evt) => {
@@ -1389,7 +1647,8 @@ export class Map extends React.Component {
 
       measure.on('drawend', () => {
         // remove the listener
-        Observable.unByKey(measure_listener);
+        unByKey(measure_listener);
+        this.props.finalizeMeasureFeature();
       });
 
       this.activeInteractions = [measure];
@@ -1401,148 +1660,54 @@ export class Map extends React.Component {
       }
     }
   }
-
-  render() {
-    let className = 'sdk-map';
-    if (this.props.className) {
-      className = `${className} ${this.props.className}`;
+  finishMeasureGeometry() {
+    if (this.activeInteractions && this.activeInteractions.length === 1) {
+      this.activeInteractions[0].finishDrawing();
     }
-    return (
-      <div style={this.props.style} ref={(c) => {
-        this.mapdiv = c;
-      }} className={className}>
-        <div className="controls">
-          {this.props.children}
-        </div>
-      </div>
-    );
+  }
+  setStyleFunc(styleObj, style) {
+    if (style) {
+      styleObj.style = getOLStyleFunctionFromMapboxStyle(style);
+    }
+    return styleObj;
+
   }
 }
 
 Map.propTypes = {
-  /** Should we wrap the world? If yes, data will be repeated in all worlds. */
-  wrapX: PropTypes.bool,
-  /** Should we handle map hover to show mouseposition? */
-  hover: PropTypes.bool,
-  /** Projection of the map, normally an EPSG code. */
-  projection: PropTypes.string,
-  /** Map configuration, modelled after the Mapbox Style specification. */
-  map: PropTypes.shape({
-    /** Center of the map. */
-    center: PropTypes.array,
-    /** Zoom level of the map. */
-    zoom: PropTypes.number,
-    /** Rotation of the map in degrees. */
-    bearing: PropTypes.number,
-    /** Extra information about the map. */
-    metadata: PropTypes.object,
-    /** List of map layers. */
-    layers: PropTypes.array,
-    /** List of layer sources. */
-    sources: PropTypes.object,
-    /** Sprite sheet to use. */
-    sprite: PropTypes.string,
-  }),
-  /** Child components. */
-  children: PropTypes.oneOfType([
-    PropTypes.arrayOf(PropTypes.node),
-    PropTypes.node
-  ]),
-  /** Mapbox specific configuration. */
-  mapbox: PropTypes.shape({
-    /** Base url to use for mapbox:// substitutions. */
-    baseUrl: PropTypes.string,
-    /** Access token for the Mapbox account to use. */
-    accessToken: PropTypes.string,
-  }),
-  /** Style configuration object. */
-  style: PropTypes.object,
-  /** Css className. */
-  className: PropTypes.string,
-  /** Drawing specific configuration. */
-  drawing: PropTypes.shape({
-    /** Current interaction to use for drawing. */
-    interaction: PropTypes.string,
-    /** Current source name to use for drawing. */
-    sourceName: PropTypes.string,
-  }),
-  /** Initial popups to display in the map. */
-  initialPopups: PropTypes.arrayOf(PropTypes.object),
-  /** setView callback function, triggered on moveend. */
-  setView: PropTypes.func,
-  /** setSize callback function, triggered on change size. */
-  setSize: PropTypes.func,
-  /** setMousePosition callback function, triggered on pointermove. */
-  setMousePosition: PropTypes.func,
-  /** setProjection callback function. */
-  setProjection: PropTypes.func,
-  /** Should we include features when the map is clicked? */
-  includeFeaturesOnClick: PropTypes.bool,
-  /** onClick callback function, triggered on singleclick. */
-  onClick: PropTypes.func,
-  /** onFeatureDrawn callback, triggered on drawend of the draw interaction. */
-  onFeatureDrawn: PropTypes.func,
-  /** onFeatureModified callback, triggered on modifyend of the modify interaction. */
-  onFeatureModified: PropTypes.func,
+  ...MapCommon.propTypes,
+  /** Should we declutter labels and symbols? */
+  declutter: PropTypes.bool,
+  /** Tolerance in pixels for WFS BBOX type queries */
+  tolerance: PropTypes.number,
   /** onFeatureSelected callback, triggered on select event of the select interaction. */
   onFeatureSelected: PropTypes.func,
+  /** onFeatureDeselected callback, triggered when a feature gets deselected. */
+  onFeatureDeselected: PropTypes.func,
   /** onExportImage callback, done on postcompose. */
   onExportImage: PropTypes.func,
-  /** setMeasureGeometry callback, called when the measure geometry changes. */
-  setMeasureGeometry: PropTypes.func,
-  /** clearMeasureFeature callback, called when the measure feature is cleared. */
-  clearMeasureFeature: PropTypes.func,
+  /** finalizeMeasureFeature callback, called when the measure feature is done.
+   * @ignore
+   */
+  finalizeMeasureFeature: PropTypes.func,
   /** Callback function that should generate a TIME based filter. */
   createLayerFilter: PropTypes.func,
 };
 
 Map.defaultProps = {
-  wrapX: true,
-  hover: true,
-  projection: 'EPSG:3857',
-  map: {
-    center: [0, 0],
-    zoom: 2,
-    bearing: 0,
-    metadata: {},
-    layers: [],
-    sources: {},
-    sprite: undefined,
-  },
-  drawing: {
-    interaction: null,
-    source: null,
-  },
-  mapbox: {
-    baseUrl: '',
-    accessToken: '',
-  },
-  initialPopups: [],
-  setView: () => {
-    // swallow event.
-  },
-  setSize: () => {},
-  setMousePosition: () => {
-    // swallow event.
-  },
-  setProjection: () => {},
-  includeFeaturesOnClick: false,
-  onClick: () => {
-  },
-  onFeatureDrawn: () => {
-  },
-  onFeatureModified: () => {
-  },
+  ...MapCommon.defaultProps,
+  tolerance: 4,
+  declutter: false,
   onFeatureSelected: () => {
+  },
+  onFeatureDeselected: () => {
   },
   onExportImage: () => {
   },
-  setMeasureGeometry: () => {
-  },
-  clearMeasureFeature: () => {
+  finalizeMeasureFeature: () => {
   },
   createLayerFilter: () => {
-  },
+  }
 };
 
 function mapStateToProps(state) {
@@ -1551,6 +1716,7 @@ function mapStateToProps(state) {
     drawing: state.drawing,
     print: state.print,
     mapbox: state.mapbox,
+    mapinfo: state.mapinfo,
   };
 }
 
@@ -1558,7 +1724,7 @@ export function getMapExtent(view, size) {
   const projection = view.getProjection();
   const targetProj = 'EPSG:4326';
   const view_extent = view.calculateExtent(size);
-  return Proj.transformExtent(view_extent, projection, targetProj);
+  return transformExtent(view_extent, projection, targetProj);
 }
 
 function mapDispatchToProps(dispatch) {
@@ -1570,7 +1736,7 @@ function mapDispatchToProps(dispatch) {
       const view = map.getView();
       const projection = view.getProjection();
       // transform the center to 4326 before dispatching the action.
-      const center = Proj.transform(view.getCenter(), projection, 'EPSG:4326');
+      const center = transform(view.getCenter(), projection, 'EPSG:4326');
       const rotation = radiansToDegrees(view.getRotation());
       const zoom = view.getZoom() - 1;
       const size = map.getSize();
@@ -1598,10 +1764,12 @@ function mapDispatchToProps(dispatch) {
         for (let i = 0, ii = geom.coordinates.length - 1; i < ii; i++) {
           const a = geom.coordinates[i];
           const b = geom.coordinates[i + 1];
-          segments.push(WGS84_SPHERE.haversineDistance(a, b));
+          segments.push(getDistance(a, b));
         }
       } else if (geom.type === 'Polygon' && geom.coordinates.length > 0) {
-        segments.push(Math.abs(WGS84_SPHERE.geodesicArea(geom.coordinates[0])));
+        const clone = geometry.clone();
+        clone.transform(projection, 'EPSG:4326');
+        segments.push(getArea(clone));
       }
 
 
@@ -1611,13 +1779,35 @@ function mapDispatchToProps(dispatch) {
         geometry: geom,
       }, segments));
     },
+    finalizeMeasureFeature: () => {
+      dispatch(finalizeMeasureFeature());
+    },
     clearMeasureFeature: () => {
       dispatch(clearMeasureFeature());
     },
     setMousePosition(lngLat, coordinate) {
       dispatch(setMousePosition(lngLat, coordinate));
     },
+    setSourceError(srcName) {
+      dispatch(setSourceError(srcName));
+    },
+    clearSourceErrors() {
+      dispatch(clearSourceErrors());
+    },
   };
+}
+
+export function getOLStyleFunctionFromMapboxStyle(styles) {
+  const sources = styles.map(function(style) {
+    return style.id;
+  });
+  const glStyle = {
+    version: 8,
+    layers: styles,
+    sources: sources
+  };
+  const olLayer = new VectorLayer();
+  return mb2olstyle(olLayer, glStyle, sources);
 }
 
 // Ensure that withRef is set to true so getWrappedInstance will return the Map.

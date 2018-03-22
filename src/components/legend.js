@@ -15,14 +15,14 @@ import fetch from 'isomorphic-fetch';
 import PropTypes from 'prop-types';
 import React from 'react';
 import {connect} from 'react-redux';
-import OlRender from 'ol/render';
-import LineString from 'ol/geom/linestring';
-import Polygon from 'ol/geom/polygon';
-import Point from 'ol/geom/point';
-import Feature from 'ol/feature';
-import VectorLayer from 'ol/layer/vector';
+import {toContext} from 'ol/render';
+import LineString from 'ol/geom/LineString';
+import Polygon from 'ol/geom/Polygon';
+import Point from 'ol/geom/Point';
+import Feature from 'ol/Feature';
+import VectorLayer from 'ol/layer/Vector';
 import {applyStyle} from 'ol-mapbox-style';
-import {jsonClone, getLayerById, parseQueryString, encodeQueryObject} from '../util';
+import {jsonEquals, jsonClone, getLayerById, parseQueryString, encodeQueryObject} from '../util';
 import {getFakeStyle, hydrateLayer} from './map';
 
 /** @module components/legend
@@ -64,6 +64,8 @@ function getRemoteLegend(href) {
       if (ref !== null) {
         ref.innerHTML = html;
       }
+    }).catch((error) => {
+      console.error('An error occured.', error);
     });
 
   return div;
@@ -225,23 +227,46 @@ export class Legend extends React.Component {
     return (layer !== nextLayer);
   }
 
-  getVectorLegend(layer, layer_src) {
+  layersEqual(layer1, layer2) {
+    let paintEqual = true;
+    if (layer1 && layer1.paint && layer2 && layer2.paint) {
+      paintEqual = jsonEquals(layer1.paint, layer2.paint);
+    }
+    let layoutEqual = true;
+    if (layer1 && layer1.layout && layer2 && layer2.layout) {
+      const layout1 = Object.assign({}, layer1.layout);
+      const layout2 = Object.assign({}, layer2.layout);
+      delete layout1.visibility;
+      delete layout2.visibility;
+      layoutEqual = jsonEquals(layout1, layout2);
+    }
+    return paintEqual && layoutEqual;
+  }
+
+  shouldComponentUpdate(nextProps) {
+    const nextLayer = getLayerById(nextProps.layers, this.props.layerId);
+    const layer = getLayerById(this.props.layers, this.props.layerId);
+    const layerEqual = this.layersEqual(nextLayer, layer);
+    let strokeEqual = true;
+    if (this.props.strokeId) {
+      const nextStrokeLayer = getLayerById(nextProps.layers, this.props.strokeId);
+      const strokeLayer = getLayerById(this.props.layers, this.props.strokeId);
+      strokeEqual = this.layersEqual(nextStrokeLayer, strokeLayer);
+    }
+    return !layerEqual || !strokeEqual;
+  }
+
+  getVectorLegend(layers, layer_src) {
     const props = this.props;
+    const layer = layers[0];
     if (!layer.metadata || !layer.metadata['bnd:legend-type']) {
       const size = props.size;
       return (<canvas ref={(c) => {
         if (c !== null) {
-          let vectorContext = OlRender.toContext(c.getContext('2d'), {size: size});
-          let newLayer;
-          if (layer.filter) {
-            newLayer = jsonClone(layer);
-            delete newLayer.filter;
-          } else {
-            newLayer = layer;
-          }
+          let vectorContext = toContext(c.getContext('2d'), {size: size});
           const fake_style = getFakeStyle(
             props.sprite,
-            [newLayer],
+            layers,
             props.mapbox.baseUrl,
             props.mapbox.accessToken
           );
@@ -285,12 +310,29 @@ export class Legend extends React.Component {
                 onApplyStyle();
               });
             }
+          }).catch((error) => {
+            console.error('An error occurred.', error);
           });
         }
       }} />);
     } else {
-      return getLegend(layer, layer_src);
+      return getLegend(layer);
     }
+  }
+
+  transformVectorLayer(layer) {
+    let result = layer;
+    if (layer.ref) {
+      result = hydrateLayer(this.props.layers, layer);
+    }
+    if (result.filter || (result.layout && result.layout.visibility === 'none')) {
+      result = jsonClone(result);
+      delete result.filter;
+      if (result.layout) {
+        delete result.layout.visibility;
+      }
+    }
+    return result;
   }
 
   /** Handles how to get the legend data based on the layer source type.
@@ -319,18 +361,19 @@ export class Legend extends React.Component {
       //  is deemed appropriate.
       case 'vector':
       case 'geojson':
-        let legendLayer;
-        if (layer.ref) {
-          legendLayer = hydrateLayer(this.props.layers, layer);
-        } else {
-          legendLayer = layer;
+        const layers = [this.transformVectorLayer(layer)];
+        if (this.props.strokeId) {
+          const strokeLayer = getLayerById(this.props.layers, this.props.strokeId);
+          if (strokeLayer !== null) {
+            layers.push(this.transformVectorLayer(strokeLayer));
+          }
         }
-        return this.getVectorLegend(legendLayer, layer_src);
+        return this.getVectorLegend(layers, layer_src);
       case 'image':
       case 'video':
       case 'canvas':
       default:
-        return getLegend(layer, layer_src);
+        return getLegend(layer);
     }
   }
 
@@ -360,6 +403,11 @@ export class Legend extends React.Component {
 Legend.propTypes = {
   /** The id of the layer for which this legend is meant. */
   layerId: PropTypes.string.isRequired,
+  /**
+   * Id of the layer that should serve as the stroke of a polygon legend swatch.
+   * Only useful for vector legends that have a separate layer for fill and stroke.
+   */
+  strokeId: PropTypes.string,
   /** List of layers from the store. */
   layers: PropTypes.arrayOf(PropTypes.object),
   /** List of layer sources. */
