@@ -1503,6 +1503,9 @@ export class Map extends React.Component {
     // when the map moves update the location in the state
     this.map.on('moveend', () => {
       this.props.setView(this.map);
+      const view = this.map.getView();
+      const size = this.map.getSize();
+      this.props.onExtentChanged(getMapExtent(view, size));
     });
 
     this.props.setSize(this.map);
@@ -1727,6 +1730,8 @@ Map.propTypes = {
   onFeatureDeselected: PropTypes.func,
   /** onExportImage callback, done on postcompose. */
   onExportImage: PropTypes.func,
+  /** onExtentChanged callback, done on moveend. */
+  onExtentChanged: PropTypes.func,
   /** finalizeMeasureFeature callback, called when the measure feature is done.
    * @ignore
    */
@@ -1747,6 +1752,8 @@ Map.defaultProps = {
   onFeatureDeselected: () => {
   },
   onExportImage: () => {
+  },
+  onExtentChanged: () => {
   },
   finalizeMeasureFeature: () => {
   },
